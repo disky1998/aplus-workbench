@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import base64
 import os
 import subprocess
 import sys
@@ -13,26 +14,21 @@ from pathlib import Path
 import version as V
 
 HERE = Path(__file__).resolve().parent
-TAG = f"v{V.__version__}"
-EXE = HERE / "dist" / V.ASSET_NAME
-NOTES = HERE / "RELEASE_NOTES.md"
-
-
 GIT_ENV = dict(os.environ,
                GIT_TERMINAL_PROMPT="0",      # 绝不弹交互提示
                GCM_INTERACTIVE="never",
                GIT_ASKPASS="echo")
 
+TAG = f"v{V.__version__}"
+EXE = HERE / "dist" / V.ASSET_NAME
+NOTES = HERE / "RELEASE_NOTES.md"
+
 
 def _ensure_git_auth():
-    """让 git 用 gh 的凭据（非交互环境下 credential manager 会拉不起来）"""
-    subprocess.run(["git", "config", "--local", "--unset-all", "credential.helper"],
-                   cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(["git", "config", "--local", "credential.helper", ""],
-                   cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(["git", "config", "--local",
-                    "credential.https://github.com.helper", "!gh auth git-credential"],
-                   cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """清掉 credential helper，认证改由 http.extraHeader 提供（见 _push）"""
+    for k in ("credential.helper", "credential.https://github.com.helper"):
+        subprocess.run(["git", "config", "--local", "--unset-all", k],
+                       cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def run(args, allow_fail=False, cwd=HERE):
@@ -40,7 +36,7 @@ def run(args, allow_fail=False, cwd=HERE):
     # 本机的 HTTP_PROXY/HTTPS_PROXY 会拦截 git 的 HTTPS 推送（静默 exit 128），显式绕开
     if args and args[0] == "git":
         args = ["git", "-c", "http.proxy="] + args[1:]
-    safe = " ".join(a for a in args if "gho_" not in a and "ghp_" not in a)
+    safe = " ".join(a for a in args if "gho_" not in a and "Basic " not in a)
     print(f"\n$ {safe}")
     p = subprocess.run(args, cwd=str(cwd), text=True, env=GIT_ENV,
                        encoding="utf-8", errors="replace",
@@ -57,6 +53,34 @@ def _git(args, cwd=HERE):
     return subprocess.run(["git", "-c", "http.proxy="] + list(args),
                           cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
                           env=GIT_ENV, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+
+def _push(branch: str):
+    """带 Authorization 头推送，不依赖任何 credential helper
+
+    踩过的坑：
+      * 系统 HTTP_PROXY 拦 git → 必须 -c http.proxy=
+      * credential.helper=manager 在非交互下拉不起来 → 改用 extraHeader
+      * github 已不接受 URL 里嵌 token，也不接受密码认证
+    """
+    tok = subprocess.run(["gh", "auth", "token"], text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.strip()
+    if not tok:
+        raise SystemExit("[失败] 取不到 gh token，请先 gh auth login")
+    auth = base64.b64encode(f"x-access-token:{tok}".encode()).decode()
+    print(f"\n$ git -c http.proxy= -c http.extraHeader=<Authorization> "
+          f"push -u origin {branch}:{branch}")
+    p = subprocess.run(
+        ["git", "-c", "http.proxy=",
+         "-c", f"http.extraHeader=Authorization: Basic {auth}",
+         "push", "-u", "origin", f"{branch}:{branch}"],
+        cwd=str(HERE), text=True, env=GIT_ENV, encoding="utf-8", errors="replace",
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if p.stdout:
+        print(p.stdout.rstrip())
+    if p.returncode:
+        raise SystemExit(f"[失败] push 退出码 {p.returncode}")
+    return p
 
 
 def _push(branch: str):
