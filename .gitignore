@@ -26,6 +26,7 @@ gh_token.py
 _*.txt
 _*.json
 _*.png
+_*.py
 _srv.log
 
 # 保留：README 用的预览图
