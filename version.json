@@ -1,18 +1,18 @@
 {
   "app": "亚马逊采集工作台",
-  "version": "1.2.0",
-  "tag": "v1.2.0",
+  "version": "1.2.1",
+  "tag": "v1.2.1",
   "published": "2026-09-10",
-  "notes": "## v1.2.0\n\n**合并为一个程序**：链接信息抓取（原来的采集器）+ A+ 内容抓取，统一入口、统一 exe。\n\n### 新增\n\n- **商品链接信息抓取**：标题、7.27 商品亮点（小标题）、类目路径、最小类目节点 ID、五点描述、主图（还原原始 master 大图）、品牌、价格、评分、评论数、卖家\n- **「抓取内容」三选一**：`全部`（商品信息 + A+，共用同一个页面一次抓完）/ `商品信息`（不解析 A+，快很多）/ `A+ 内容`\n- **商品信息表导出**：Excel（多列 + 图片 URL 列）与 CSV，一次任务的所有 SKU 汇总成一张表；历史产出也能随时导出\n- 结果表新增「商品信息」列，直接看到标题、亮点、五点条数、主图张数、品牌、价格、评分、类目\n\n### 变更\n\n- 程序更名：**亚马逊采集工作台**（`AmazonWorkbench.exe`）\n- **下载图片**、**有头模式** 改为默认开启（有头模式第一次跑一次过掉验证码，之后会话会被记住）\n- 选中「商品信息」时，A+ 相关设置自动收起\n\n### 保留\n\n- A+ 抓取：普通 / 高级 A+（Premium A+），桌面端 + 移动端，三种模式（自动判定 / 强制普通 / 强制高级）\n- 排版还原单文件 HTML、按 SKU 分节的 `combined.html`、A+ 图片包 `aplus_images.zip`（含 `manifest.csv`）\n- 历史产出可一键重建合集 / 重新打包图片，不必重抓\n- 桌面托盘、启动自动检查更新、一键下载并自动替换重启\n- 浅色 / 深色双主题\n\n### 运行要求\n\n- Windows 10 / 11 64 位\n- 首次使用请在「环境」面板点一次「安装 / 更新内核」（约 150 MB，只需一次）\n",
-  "size": 66200182,
-  "sha256": "b5412974f489f4cff84f20d604cd59f5aeef933d109c1a7294baef80bf6a4a61",
-  "download_url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.2.0/AmazonWorkbench.exe",
-  "html_url": "https://github.com/disky1998/aplus-workbench/releases/tag/v1.2.0",
+  "notes": "## v1.2.1\n\n**修复：exe 双击后报「服务启动失败：Unable to configure formatter 'default'」** —— 已彻底解决，直接换用这个版本即可。\n\n### 修复\n\n- 🔴 **exe 启动即失败**。无控制台打包（`console=False`）后 `sys.stdout` / `sys.stderr` 是 `None`，而 uvicorn 的日志格式化器初始化时会执行 `sys.stdout.isatty()`，抛出的 `AttributeError` 被 `logging.config` 包成了 `Unable to configure formatter 'default'`，服务根本起不来。源码运行（有控制台）不会触发，所以之前测试没暴露。\n  - 现在启动时先把 `sys.stdout` / `sys.stderr` 补成真实可写的文件流\n  - 同时换成不读 `isatty()` 的标准库日志配置，双保险\n- 报错弹窗与异常兜底现在会显示**出错位置摘要**并给出日志文件路径，不再只有一句干巴巴的消息\n\n### 新增\n\n- **运行日志**：`logs/workbench.log`（程序日志）与 `logs/server.log`（服务输出）落在 exe 同目录；该目录不可写时自动退到 `%TEMP%\\AmazonWorkbench\\`。以后出问题直接把这两个文件发我就能定位\n\n### 运行要求\n\n- Windows 10 / 11 64 位\n- 首次使用请在「环境」面板点一次「安装 / 更新内核」（约 150 MB，只需一次）\n\n---\n\n## v1.2.0\n\n**合并为一个程序**：链接信息抓取（原来的采集器）+ A+ 内容抓取，统一入口、统一 exe。\n\n### 新增\n\n- **商品链接信息抓取**：标题、7.27 商品亮点（小标题）、类目路径、最小类目节点 ID、五点描述、主图（还原原始 master 大图）、品牌、价格、评分、评论数、卖家\n- **「抓取内容」三选一**：`全部`（商品信息 + A+，共用同一个页面一次抓完）/ `商品信息`（不解析 A+，快很多）/ `A+ 内容`\n- **商品信息表导出**：Excel（多列 + 图片 URL 列）与 CSV，一次任务的所有 SKU 汇总成一张表；历史产出也能随时导出\n- 结果表新增「商品信息」列，直接看到标题、亮点、五点条数、主图张数、品牌、价格、评分、类目\n\n### 变更\n\n- 程序更名：**亚马逊采集工作台**（`AmazonWorkbench.exe`）\n- **下载图片**、**有头模式** 改为默认开启（有头模式第一次跑一次过掉验证码，之后会话会被记住）\n- 选中「商品信息」时，A+ 相关设置自动收起\n\n### 保留\n\n- A+ 抓取：普通 / 高级 A+（Premium A+），桌面端 + 移动端，三种模式（自动判定 / 强制普通 / 强制高级）\n- 排版还原单文件 HTML、按 SKU 分节的 `combined.html`、A+ 图片包 `aplus_images.zip`（含 `manifest.csv`）\n- 历史产出可一键重建合集 / 重新打包图片，不必重抓\n- 桌面托盘、启动自动检查更新、一键下载并自动替换重启\n- 浅色 / 深色双主题\n\n### 运行要求\n\n- Windows 10 / 11 64 位\n- 首次使用请在「环境」面板点一次「安装 / 更新内核」（约 150 MB，只需一次）\n",
+  "size": 66204188,
+  "sha256": "77e40393ecc98e939ece14029f8a2d57f249383b566785fd95e4073c9186afe1",
+  "download_url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.2.1/AmazonWorkbench.exe",
+  "html_url": "https://github.com/disky1998/aplus-workbench/releases/tag/v1.2.1",
   "assets": [
     {
       "name": "AmazonWorkbench.exe",
-      "size": 66200182,
-      "url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.2.0/AmazonWorkbench.exe",
+      "size": 66204188,
+      "url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.2.1/AmazonWorkbench.exe",
       "is_exe": true
     }
   ]

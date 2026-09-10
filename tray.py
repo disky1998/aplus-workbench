@@ -26,7 +26,28 @@ import version as V  # noqa: E402
 
 PORT = int(os.environ.get("APLUS_PORT", "8788"))
 URL = f"http://127.0.0.1:{PORT}/"
-LOG_FILE = Path(os.environ.get("TEMP") or ".") / "aplus_workbench.log"
+
+
+def _pick_log_dir() -> Path:
+    """日志目录：优先 exe 同级的 logs/，不可写则退回 %TEMP%"""
+    cands = []
+    if getattr(sys, "frozen", False):
+        cands.append(Path(sys.executable).resolve().parent / "logs")
+    cands.append(HERE / "logs")
+    cands.append(Path(os.environ.get("TEMP") or ".") / "AmazonWorkbench")
+    for d in cands:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / "workbench.log", "a", encoding="utf-8"):
+                pass
+            return d
+        except Exception:
+            continue
+    return Path(os.environ.get("TEMP") or ".")
+
+
+LOG_DIR = _pick_log_dir()
+LOG_FILE = LOG_DIR / "workbench.log"
 
 
 def log(msg: str):
@@ -38,12 +59,43 @@ def log(msg: str):
         pass
 
 
+def ensure_std_streams():
+    """修掉「无控制台打包」的致命坑。
+
+    console=False 打包后 sys.stdout / sys.stderr 是 None，而 uvicorn 的
+    ColourizedFormatter 初始化时会调 sys.stdout.isatty() → AttributeError，
+    被 logging.config.dictConfig 包成
+    ValueError: Unable to configure formatter 'default'，服务根本起不来。
+
+    这里把它们换成真实可写的文件流，顺便把服务日志落到 logs/server.log。
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    stream = None
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stream = open(LOG_DIR / "server.log", "a", encoding="utf-8",
+                      errors="replace", buffering=1)
+    except Exception:
+        try:
+            stream = open(os.devnull, "w", encoding="utf-8")
+        except Exception:
+            return
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
 def _excepthook(exc_type, exc, tb):
     import traceback
-    log("UNCAUGHT: " + "".join(traceback.format_exception(exc_type, exc, tb)))
+    text = "".join(traceback.format_exception(exc_type, exc, tb))
+    log("UNCAUGHT:\n" + text)
     try:
         import ctypes
-        ctypes.windll.user32.MessageBoxW(0, f"程序出错：\n{exc}", V.APP_NAME, 0x10)
+        ctypes.windll.user32.MessageBoxW(
+            0, f"程序出错：\n{_short_tb(text)}\n\n日志：{LOG_FILE}",
+            V.APP_NAME, 0x10)
     except Exception:
         pass
 
@@ -80,18 +132,52 @@ def already_running() -> bool:
 # ---------------------------------------------------------------- 服务线程
 SERVER_ERROR: list = []
 
+# 不用 uvicorn 内置的 LOGGING_CONFIG：它引用 uvicorn.logging.ColourizedFormatter，
+# 该类初始化会读 sys.stdout.isatty()，在无控制台环境里直接抛异常。
+# 这里用纯标准库 Formatter，不碰 isatty。
+UVICORN_LOG_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "plain",
+            "stream": "ext://sys.stderr",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "uvicorn.error": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "uvicorn.access": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
+
+
+def _short_tb(tb: str, n: int = 5) -> str:
+    lines = [l for l in (tb or "").strip().splitlines() if l.strip()]
+    return "\n".join(lines[-n:])
+
 
 def start_server():
     try:
         import uvicorn
         import webapp
-        log(f"starting server on {URL} (frozen={getattr(sys,'frozen',False)})")
-        uvicorn.run(webapp.app, host="127.0.0.1", port=PORT, log_level="warning")
+        log(f"starting server on {URL} (frozen={getattr(sys, 'frozen', False)}, "
+            f"uvicorn={getattr(uvicorn, '__version__', '?')}, "
+            f"stdout={'None' if sys.stdout is None else 'ok'})")
+        cfg = uvicorn.Config(webapp.app, host="127.0.0.1", port=PORT,
+                             log_config=UVICORN_LOG_CONFIG, log_level="info",
+                             access_log=False)
+        uvicorn.Server(cfg).run()
     except Exception as e:                      # 端口占用 / 依赖缺失
-        log("server error: " + repr(e))
         import traceback
-        log(traceback.format_exc())
-        SERVER_ERROR.append(str(e))
+        tb = traceback.format_exc()
+        log("server error: " + repr(e))
+        log(tb)
+        SERVER_ERROR.append(_short_tb(tb))
 
 
 # ---------------------------------------------------------------- 托盘
@@ -195,6 +281,7 @@ def run_tray():
 
 # ---------------------------------------------------------------- 入口
 def main():
+    ensure_std_streams()        # 必须最先做：无控制台环境下补 sys.stdout / sys.stderr
     prepare_env()
 
     if already_running():
@@ -213,11 +300,14 @@ def main():
 
     if SERVER_ERROR:
         msg = SERVER_ERROR[0]
+        log("启动失败，弹窗提示用户")
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(0, f"服务启动失败：\n{msg}", V.APP_NAME, 0x10)
+            ctypes.windll.user32.MessageBoxW(
+                0, f"服务启动失败：\n{msg}\n\n详细日志：{LOG_FILE}",
+                V.APP_NAME, 0x10)
         except Exception:
-            print("服务启动失败:", msg)
+            pass
         return
 
     open_front()
@@ -225,7 +315,7 @@ def main():
         run_tray()
     except Exception as e:
         # 托盘不可用（缺 pystray / 无桌面）时，退化为纯服务常驻
-        print(f"[warn] 托盘启动失败：{e}")
+        log(f"托盘启动失败：{e}")
         while True:
             time.sleep(3600)
 

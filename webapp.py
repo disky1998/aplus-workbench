@@ -1070,7 +1070,15 @@ app.mount("/out", StaticFiles(directory=str(WEB_OUT)), name="out")
 
 if __name__ == "__main__":
     import uvicorn
+    # 无控制台环境（pythonw / 打包）下 sys.stdout / sys.stderr 为 None，
+    # uvicorn 的彩色格式化器会调 isatty() 崩掉，先补兜底流
+    if sys.stdout is None or sys.stderr is None:
+        _sink = open(os.devnull, "w", encoding="utf-8")
+        if sys.stdout is None:
+            sys.stdout = _sink
+        if sys.stderr is None:
+            sys.stderr = _sink
     url = f"http://127.0.0.1:{PORT}"
-    print(f"\n  A+ 抓取工作台已启动 -> {url}\n")
+    print(f"\n  {V.APP_NAME} 已启动 -> {url}\n")
     threading.Timer(1.2, lambda: (os.startfile(url) if sys.platform == "win32" else None)).start()
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

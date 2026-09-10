@@ -1,3 +1,25 @@
+## v1.2.1
+
+**修复：exe 双击后报「服务启动失败：Unable to configure formatter 'default'」** —— 已彻底解决，直接换用这个版本即可。
+
+### 修复
+
+- 🔴 **exe 启动即失败**。无控制台打包（`console=False`）后 `sys.stdout` / `sys.stderr` 是 `None`，而 uvicorn 的日志格式化器初始化时会执行 `sys.stdout.isatty()`，抛出的 `AttributeError` 被 `logging.config` 包成了 `Unable to configure formatter 'default'`，服务根本起不来。源码运行（有控制台）不会触发，所以之前测试没暴露。
+  - 现在启动时先把 `sys.stdout` / `sys.stderr` 补成真实可写的文件流
+  - 同时换成不读 `isatty()` 的标准库日志配置，双保险
+- 报错弹窗与异常兜底现在会显示**出错位置摘要**并给出日志文件路径，不再只有一句干巴巴的消息
+
+### 新增
+
+- **运行日志**：`logs/workbench.log`（程序日志）与 `logs/server.log`（服务输出）落在 exe 同目录；该目录不可写时自动退到 `%TEMP%\AmazonWorkbench\`。以后出问题直接把这两个文件发我就能定位
+
+### 运行要求
+
+- Windows 10 / 11 64 位
+- 首次使用请在「环境」面板点一次「安装 / 更新内核」（约 150 MB，只需一次）
+
+---
+
 ## v1.2.0
 
 **合并为一个程序**：链接信息抓取（原来的采集器）+ A+ 内容抓取，统一入口、统一 exe。
