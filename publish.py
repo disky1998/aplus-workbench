@@ -33,11 +33,27 @@ def run(args, allow_fail=False, cwd=HERE):
     return p
 
 
+def _gh_token() -> str:
+    """取 gh 已登录的 token —— 非交互环境下 credential helper 拉不起来，
+    直接把 token 放进推送 URL 最可靠"""
+    return subprocess.run(["gh", "auth", "token"], text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.strip()
+
+
 def _git(args, cwd=HERE):
     """不打印的 git 调用（同样绕开代理）"""
     return subprocess.run(["git", "-c", "http.proxy=", "-c", "https.proxy="] + list(args),
                           cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+
+def _push(branch: str):
+    """用 token URL 直接推送（origin 只做记录）"""
+    tok = _gh_token()
+    if not tok:
+        raise SystemExit("[失败] 取不到 gh token，请先 gh auth login")
+    auth_url = f"https://x-access-token:{tok}@github.com/{V.GITHUB_REPO}.git"
+    run(["git", "push", "--force", auth_url, f"{branch}:{branch}"])
 
 
 def main():
@@ -68,7 +84,7 @@ def main():
         run(["git", "remote", "add", "origin",
              f"https://github.com/{V.GITHUB_REPO}.git"])
     run(["git", "branch", "-M", V.GITHUB_BRANCH])
-    run(["git", "push", "-u", "origin", V.GITHUB_BRANCH])
+    _push(V.GITHUB_BRANCH)
 
     # 3. Release：已存在就删掉重建
     exists = subprocess.run(["gh", "release", "view", TAG], cwd=str(HERE),
