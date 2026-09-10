@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>A+ 抓取工作台</title>
+<title>亚马逊采集工作台</title>
 <script>
 /* 主题需在首屏渲染前定好，否则会闪一下白 */
 (function(){
@@ -488,10 +488,10 @@ tbody tr:last-child td{border-bottom:0}
 
   <header class="topbar">
     <div class="brand">
-      <div class="logo">A+</div>
+      <div class="logo">采</div>
       <div style="min-width:0">
-        <h1>A+ 抓取工作台</h1>
-        <p>粘贴链接 · 自动排版 · 合集与图片包</p>
+        <h1>亚马逊采集工作台</h1>
+        <p>链接信息 + A+ 内容 · 一次抓全</p>
       </div>
     </div>
     <div class="spacer"></div>
@@ -565,6 +565,21 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
           </div>
 
           <div class="field">
+            <label class="f">抓取内容</label>
+            <div class="seg" id="wantSeg">
+              <span class="ind" id="wantInd"></span>
+              <button type="button" data-v="all" title="商品链接信息（标题 / 亮点 / 类目 / NodeID / 五点 / 主图 / 品牌 / 价格 / 评分）+ A+ 内容，共用同一个页面一次抓完">全部</button>
+              <button type="button" data-v="product" title="只抓商品链接信息，不解析 A+，速度快很多">商品信息</button>
+              <button type="button" data-v="aplus" title="只抓 A+ 内容（普通 / 高级 A+、合集、图片包）">A+ 内容</button>
+            </div>
+            <select id="want" class="sr" tabindex="-1">
+              <option value="all">all</option>
+              <option value="product">product</option>
+              <option value="aplus">aplus</option>
+            </select>
+          </div>
+
+          <div class="field" id="modeField">
             <label class="f">A+ 抓取模式</label>
             <div class="seg" id="modeSeg">
               <span class="ind" id="modeInd"></span>
@@ -588,13 +603,13 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
             </select>
           </div>
 
-          <div class="field">
-            <label class="f">产物</label>
+          <div class="field" id="prodField">
+            <label class="f">A+ 产物</label>
             <div class="toggles">
               <label class="sw" title="同时抓桌面端与移动端（高级 A+ 才有独立移动端）">
                 <input type="checkbox" id="both" checked><span class="track"></span><span class="txt">桌面+移动</span></label>
-              <label class="sw" title="把 A+ 图片下载到本地 images/ 目录">
-                <input type="checkbox" id="dlImg"><span class="track"></span><span class="txt">下载图片</span></label>
+              <label class="sw" title="把商品图 / A+ 图片下载到本地 images/ 目录">
+                <input type="checkbox" id="dlImg" checked><span class="track"></span><span class="txt">下载图片</span></label>
               <label class="sw" title="抓取结束后生成按 SKU 分节的 combined.html">
                 <input type="checkbox" id="buildCombined" checked><span class="track"></span><span class="txt">生成合集</span></label>
               <label class="sw" title="打包 aplus_images.zip（含 manifest.csv），会自动勾选「下载图片」">
@@ -624,7 +639,7 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
               <div class="field">
                 <label class="f">抓取行为</label>
                 <div class="toggles" style="grid-template-columns:1fr">
-                  <label class="sw" title="弹出真实浏览器窗口，可手动过验证码"><input type="checkbox" id="headed"><span class="track"></span><span class="txt">有头模式</span></label>
+                  <label class="sw" title="弹出真实浏览器窗口，可手动过验证码 —— 不容易被拦，默认开启"><input type="checkbox" id="headed" checked><span class="track"></span><span class="txt">有头模式</span></label>
                   <label class="sw" title="复用上次的 cookies，大幅减少验证码"><input type="checkbox" id="persist" checked><span class="track"></span><span class="txt">记住登录态</span></label>
                   <label class="sw" title="连品牌故事模块一起抓（默认不抓）"><input type="checkbox" id="bs"><span class="track"></span><span class="txt">含品牌故事</span></label>
                   <label class="sw" title="额外保存 A+ 区域整块截图"><input type="checkbox" id="shot"><span class="track"></span><span class="txt">整块截图</span></label>
@@ -773,21 +788,35 @@ function setSite(v){
   $('siteSeg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v === v));
 }
 
-/* ---------------- 模式分段 ---------------- */
-function setMode(v){
-  const seg = $('modeSeg');
+/* ---------------- 分段控件（模式 / 抓取内容 共用） ---------------- */
+function setSeg(segId, indId, selId, v){
+  const seg = $(segId), ind = $(indId);
+  if(!seg || !ind) return;
   const btns = [...seg.querySelectorAll('button')];
   const idx = Math.max(0, btns.findIndex(b=>b.dataset.v === v));
   btns.forEach((b,i)=>b.classList.toggle('on', i === idx));
-  const ind = $('modeInd');
   const b = btns[idx];
+  if(!b) return;
   ind.style.width = b.offsetWidth + 'px';
   ind.style.transform = `translateX(${b.offsetLeft - 3}px)`;
-  $('aplusMode').value = v;
+  $(selId).value = v;
 }
-$('modeSeg').querySelectorAll('button').forEach(b=>{
-  b.onclick = () => setMode(b.dataset.v);
-});
+function setMode(v){ setSeg('modeSeg','modeInd','aplusMode', v); }
+function setWant(v){
+  setSeg('wantSeg','wantInd','want', v);
+  // 只抓商品信息时，A+ 相关的设置整块收起，界面不啰嗦
+  const off = v === 'product';
+  [$('modeField'), $('prodField')].forEach(el=>{
+    if(!el) return;
+    el.classList.toggle('hidden', off);
+  });
+}
+function layoutSegs(){
+  setMode($('aplusMode').value || 'auto');
+  setWant($('want').value || 'all');
+}
+$('modeSeg').querySelectorAll('button').forEach(b=> b.onclick = () => setMode(b.dataset.v));
+$('wantSeg').querySelectorAll('button').forEach(b=> b.onclick = () => setWant(b.dataset.v));
 
 /* ---------------- 折叠 ---------------- */
 $('btnFoldAdv').onclick = () => $('foldAdv').classList.toggle('open');
@@ -925,6 +954,7 @@ $('btnRun').onclick = async ()=>{
   if(!text.trim()){ toast('先粘贴 ASIN 或商品链接','err'); return; }
   const body = {
     text, domain: $('domain').value,
+    want: $('want').value,
     both: $('both').checked, forceMobile: $('forceM').checked,
     aplusMode: $('aplusMode').value,
     downloadImages: $('dlImg').checked, includeBrandStory: $('bs').checked,
@@ -1085,29 +1115,51 @@ function renderProgress(d){
     }
     const rows = d.results.map(r=>{
       const kind = r.kind || (r.premium ? 'premium' : 'standard');
-      const tag = r.ok
-        ? (kind === 'premium' ? '<span class="badge ok">高级 A+</span>' : '<span class="badge dim">普通 A+</span>')
-        : '<span class="badge err">失败</span>';
+      const tag = !r.ok
+        ? '<span class="badge err">失败</span>'
+        : (kind === 'premium' ? '<span class="badge ok">高级 A+</span>'
+           : kind === 'standard' ? '<span class="badge dim">普通 A+</span>'
+           : '<span class="badge dim">未抓 A+</span>');
       const noA = (r.viewports?.desktop?.has === false) ? ' <span class="badge err">无 A+</span>' : '';
       const ev = (r.evidence && r.evidence.length)
         ? `<div class="why">${esc(r.evidence.join('；'))}</div>` : '';
       const dv = r.viewports?.desktop || {};
       const mv = r.viewports?.mobile || {};
-      const mob = mv.skipped ? '<span class="badge dim">无独立版</span>'
+      const hasA = Object.keys(r.viewports || {}).length > 0;
+      const mob = !hasA ? '<span style="color:var(--dim)">—</span>'
+        : mv.skipped ? '<span class="badge dim">无独立版</span>'
         : (mv.has === undefined ? '<span style="color:var(--dim)">—</span>'
            : (mv.has ? '<span class="badge ok">已抓</span>' : '<span class="badge err">无</span>'));
+
+      const p = r.product;
+      const pcell = p
+        ? `<div style="font-size:12px;color:var(--ink)">${esc(p.title || '—')}</div>
+           <div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
+             ${p.highlights ? '<span class="badge go">亮点</span>' : ''}
+             <span class="badge ${p.bullets ? 'ok' : 'warn'}">五点 ${p.bullets}</span>
+             <span class="badge ${p.images ? 'ok' : 'warn'}">主图 ${p.images}</span>
+             ${p.brand ? `<span class="badge dim">${esc(p.brand)}</span>` : ''}
+             ${p.price ? `<span class="badge dim">${esc(p.price)}</span>` : ''}
+             ${p.rating ? `<span class="badge dim">★${esc(p.rating)}</span>` : ''}
+           </div>
+           ${p.category ? `<div class="why">${esc(p.category)}${p.nodeId ? ` · node ${esc(p.nodeId)}` : ''}</div>` : ''}`
+        : '<span style="color:var(--dim)">—</span>';
+
       return `<tr>
         <td><span class="sku">${esc(r.sku||r.asin)}</span>
           <div class="sub"><a href="https://www.amazon.${r.domain}/dp/${r.asin}" target="_blank">${esc(r.asin)}</a> · ${esc(r.domain)}</div></td>
+        <td>${pcell}</td>
         <td>${tag}${noA}${ev}</td>
-        <td style="font-variant-numeric:tabular-nums">${dv.modules ?? '—'} <span style="color:var(--dim)">/</span> ${dv.images ?? '—'}</td>
-        <td style="font-variant-numeric:tabular-nums">${dv.maxw ?? '—'}</td>
+        <td style="font-variant-numeric:tabular-nums;white-space:nowrap">${
+          hasA ? `${dv.modules ?? '—'} <span style="color:var(--dim)">/</span> ${dv.images ?? '—'}`
+                : '<span style="color:var(--dim)">—</span>'}${
+          dv.maxw ? `<div class="why">宽 ${dv.maxw}</div>` : ''}</td>
         <td>${mob}</td>
         <td style="color:var(--ink2)">${esc(r.note||'')}</td>
       </tr>`;
     }).join('');
     $('results').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
-        <th>SKU</th><th>类型 / 判定依据</th><th>模块 / 图</th><th>图宽</th><th>移动端</th><th>备注</th>
+        <th>SKU</th><th>商品信息</th><th>A+ 类型</th><th>模块 / 图</th><th>移动端</th><th>备注</th>
       </tr></thead><tbody>${rows}</tbody></table></div>`;
     $('results').classList.add('filled');
     $('resCount').textContent = `${d.results.length} 条`;
@@ -1116,6 +1168,11 @@ function renderProgress(d){
   }
 
   const btns = [];
+  const hasProduct = (d.results || []).some(r => r.product);
+  if(hasProduct || dirId){
+    btns.push(`<a href="/api/export/product.xlsx?dir=${encodeURIComponent(dirId)}"><button class="btn sm">商品信息表 Excel</button></a>`);
+    btns.push(`<a href="/api/export/product.csv?dir=${encodeURIComponent(dirId)}"><button class="btn sm">CSV</button></a>`);
+  }
   if(d.combined){
     btns.push(`<a href="/out/${d.combined}" target="_blank"><button class="btn sm">打开合集</button></a>`);
     btns.push(`<a href="/api/history/${dirId}/download/combined"><button class="btn sm">下载合集 HTML</button></a>`);
@@ -1149,25 +1206,35 @@ async function loadHistory(){
     if(!items.length){ $('histBox').innerHTML = '<div class="empty">还没有产出目录</div>'; return; }
     $('histBox').innerHTML = `<div class="hist-grid">${items.map((it,i)=>{
       const chips = (it.skus||[]).map(s=>{
-        const k = s.kind === 'premium'
-          ? '<span class="badge ok">高级</span>' : '<span class="badge dim">普通</span>';
-        const vps = Object.keys(s.viewports||{}).sort().join('+') || '—';
-        return `<span class="s">${esc(s.sku)} ${k}<span style="color:var(--dim)">${esc(vps)}</span></span>`;
+        const parts = [];
+        if(s.product){
+          parts.push(`<span class="badge go">商品 ${s.product.bullets}点/${s.product.images}图</span>`);
+        }
+        if(s.kind){
+          parts.push(s.kind === 'premium' ? '<span class="badge ok">高级 A+</span>'
+                                          : '<span class="badge dim">普通 A+</span>');
+        }
+        const vps = Object.keys(s.viewports||{}).sort().join('+');
+        if(vps) parts.push(`<span style="color:var(--dim)">${esc(vps)}</span>`);
+        return `<span class="s">${esc(s.sku)} ${parts.join(' ')}</span>`;
       }).join('');
       return `<div class="hcard" style="animation-delay:${i*45}ms">
         <div class="top">
           <span class="id">${esc(it.id)}</span>
           <span class="badge dim">${it.sku_count} SKU</span>
           <span class="badge dim">${esc(it.mtime)}</span>
+          ${it.has_product ? `<span class="badge go">商品信息 ${it.product_count}</span>` : ''}
           ${it.has_combined
             ? `<span class="badge ok">合集 ${Math.round(it.combined_bytes/1024)}KB</span>`
-            : '<span class="badge warn">无合集</span>'}
+            : (it.sku_count ? '<span class="badge warn">无合集</span>' : '')}
           ${it.has_zip
             ? `<span class="badge ok">图片包 ${(it.zip_bytes/1048576).toFixed(1)}MB</span>`
-            : '<span class="badge warn">无图片包</span>'}
+            : ''}
         </div>
         <div class="skus">${chips}</div>
         <div class="acts">
+          ${it.has_product?`<a href="/api/export/product.xlsx?dir=${encodeURIComponent(it.id)}"><button class="btn sm">商品信息表</button></a>`:''}
+          ${it.has_product?`<a href="/api/export/product.csv?dir=${encodeURIComponent(it.id)}"><button class="btn ghost sm">CSV</button></a>`:''}
           <button class="btn sm" data-rb="${esc(it.id)}" data-do="combined">重建合集</button>
           <button class="btn sm" data-rb="${esc(it.id)}" data-do="package">重打包图片</button>
           <button class="btn ghost sm" data-rb="${esc(it.id)}" data-do="both">两者都重建</button>
@@ -1348,11 +1415,11 @@ function startUpdPoll(){
 
 /* ---------------- 启动 ---------------- */
 renderSites();
-setMode('auto');
+layoutSegs();
 resetStats(0);
 emptyResults('还没有任务', '粘贴 ASIN 或商品链接后开始');
-window.addEventListener('load', ()=>setMode($('aplusMode').value));   // 字体加载后重算指示器
-window.addEventListener('resize', ()=>setMode($('aplusMode').value));
+window.addEventListener('load', layoutSegs);      // 字体加载后重算指示器
+window.addEventListener('resize', layoutSegs);
 loadEnv();
 loadHistory();
 setTimeout(()=>checkUpdate(true), 2200);   // 打开后自动检查更新

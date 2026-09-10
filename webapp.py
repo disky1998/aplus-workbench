@@ -19,7 +19,7 @@ from pathlib import Path
 
 import requests
 from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,6 +32,8 @@ if getattr(sys, "frozen", False) and not os.environ.get("PLAYWRIGHT_BROWSERS_PAT
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path(_local) / "ms-playwright")
 
 import scrape_aplus as sa  # noqa: E402
+import exporter as exp  # noqa: E402
+import product as prodmod  # noqa: E402
 import updater as UPD  # noqa: E402
 import version as V  # noqa: E402
 
@@ -224,12 +226,18 @@ def run_task(task: Task):
                     mode = (o.get("aplusMode") or "auto").lower()
                     if mode not in sa.APLUS_MODES:
                         mode = "auto"
-                    vps = ["desktop", "mobile"] if (o.get("both") or mode == "premium") else ["desktop"]
+                    want = (o.get("want") or "all").lower()
+                    if want not in ("all", "product", "aplus"):
+                        want = "all"
+                    if want == "product":
+                        vps = ["desktop"]           # 商品信息与视口无关，抓一次就够
+                    else:
+                        vps = ["desktop", "mobile"] if (o.get("both") or mode == "premium") else ["desktop"]
                     task.progress["current"] = f"{sku}({asin})"
                     entry = {"sku": sku, "asin": asin, "domain": dom, "viewports": {},
                              "ok": False, "premium": False, "kind": "", "evidence": [],
-                             "note": ""}
-                    print(f"\n[{idx+1}/{len(items)}] {sku} = {asin} @ {dom}  [模式 {mode}]")
+                             "product": None, "note": ""}
+                    print(f"\n[{idx+1}/{len(items)}] {sku} = {asin} @ {dom}  [{want} · 模式 {mode}]")
 
                     # 用下标循环：判定为普通 A+ 后 vps 会被就地移除 mobile
                     i = 0
@@ -252,7 +260,7 @@ def run_task(task: Task):
                                     int(o.get("hires", 0) or 0),
                                     folder=sku,
                                     state_file=str(state_file) if o.get("persist", True) else None,
-                                    mode=mode)
+                                    mode=mode, want=want)
                                 err = None
                                 break
                             except Exception as e:
@@ -274,6 +282,34 @@ def run_task(task: Task):
                         entry["premium"] = data.get("is_premium_candidate", False)
                         entry["kind"] = data.get("aplus_kind", "")
                         entry["evidence"] = data.get("premium_evidence") or []
+
+                        prod = data.get("product")
+                        if prod:
+                            entry["product"] = {
+                                "title": (prod.get("title") or "")[:120],
+                                "bullets": len(prod.get("bullets") or []),
+                                "images": len(prod.get("images") or []),
+                                "highlights": bool(prod.get("highlights")),
+                                "category": prod.get("category") or "",
+                                "nodeId": prod.get("nodeId") or "",
+                                "brand": prod.get("brand") or "",
+                                "price": prod.get("price") or "",
+                                "rating": prod.get("rating") or "",
+                                "reviews": prod.get("reviews") or "",
+                                "bulletsSource": prod.get("bulletsSource") or "",
+                                "miss": prodmod.missing_fields(prod),
+                            }
+
+                        if data.get("product_only"):
+                            # 只抓商品信息：没有 A+ 结果，直接收工
+                            entry["kind"] = "none"
+                            entry["ok"] = bool(prod and not prodmod.missing_fields(prod))
+                            if not entry["ok"]:
+                                entry["note"] = "商品信息不全：" + \
+                                    "、".join(prodmod.missing_fields(prod or {}))
+                            i += 1
+                            continue
+
                         entry["viewports"][vp] = {
                             "has": data.get("has_aplus"),
                             "modules": data.get("module_count"),
@@ -323,7 +359,7 @@ def run_task(task: Task):
                     browser.close()
 
             # 合并排版页
-            if not task.stop_flag and o.get("buildCombined", True):
+            if not task.stop_flag and want != "product" and o.get("buildCombined", True):
                 print("\n[合并] 正在按 SKU 分节生成合集 ...")
                 try:
                     cp = sa.build_combined_html(out_root, items, task.domain)
@@ -334,7 +370,7 @@ def run_task(task: Task):
                     traceback.print_exc(file=lw)
 
             # 图片打包：<SKU>/A+/<desktop|mobile>/<序号>.<ext> + manifest.csv
-            if not task.stop_flag and o.get("packageImages", True):
+            if not task.stop_flag and want != "product" and o.get("packageImages", True):
                 print("[打包] 正在压缩 A+ 图片 ...")
                 try:
                     zpath = out_root / "aplus_images.zip"
@@ -535,6 +571,7 @@ def driver_links(version: str):
 class RunRequest(BaseModel):
     text: str
     domain: str = "ae"
+    want: str = "all"                # all / product / aplus
     both: bool = True
     forceMobile: bool = False
     aplusMode: str = "auto"          # auto / standard / premium
@@ -760,39 +797,58 @@ def scan_history():
                     "skipped": bool(meta.get("mobile_skipped")),
                     "evidence": meta.get("premium_evidence") or [],
                 }
-            if not vps:
-                continue
-            dm = {}
-            cj = sub / "desktop" / "content.json"
-            if cj.exists():
+
+            # 商品链接信息
+            product = None
+            pdata = {}
+            pj = sub / "product.json"
+            if pj.exists():
                 try:
-                    dm = json.loads(cj.read_text(encoding="utf-8"))
+                    pdata = json.loads(pj.read_text(encoding="utf-8"))
                 except Exception:
-                    dm = {}
-            if not dm:
-                for vp in ("mobile",):
-                    cj = sub / vp / "content.json"
-                    if cj.exists():
-                        try:
-                            dm = json.loads(cj.read_text(encoding="utf-8"))
-                        except Exception:
-                            dm = {}
+                    pdata = {}
+                if pdata:
+                    product = {
+                        "title": (pdata.get("title") or "")[:80],
+                        "bullets": len(pdata.get("bullets") or []),
+                        "images": len(pdata.get("images") or []),
+                        "highlights": bool(pdata.get("highlights")),
+                        "brand": pdata.get("brand") or "",
+                        "price": pdata.get("price") or "",
+                    }
+            if not vps and not product:
+                continue
+
+            dm = {}
+            for vp in ("desktop", "mobile"):
+                cj = sub / vp / "content.json"
+                if cj.exists():
+                    try:
+                        dm = json.loads(cj.read_text(encoding="utf-8"))
+                    except Exception:
+                        dm = {}
+                    if dm:
+                        break
             skus.append({
                 "sku": sub.name,
-                "asin": dm.get("asin") or "",
+                "asin": dm.get("asin") or pdata.get("asin") or "",
                 "viewports": vps,
+                "product": product,
                 "kind": dm.get("aplus_kind") or
-                        ("premium" if dm.get("is_premium_candidate") else "standard"),
+                        ("premium" if dm.get("is_premium_candidate") else ("standard" if dm else "")),
                 "evidence": dm.get("premium_evidence") or [],
             })
 
         zp = d / "aplus_images.zip"
         cp = d / "combined.html"
+        has_product = any(s.get("product") for s in skus)
         out.append({
             "id": d.name,
             "dir": d.relative_to(WEB_OUT).as_posix(),
             "skus": skus,
             "sku_count": len(skus),
+            "has_product": has_product,
+            "product_count": sum(1 for s in skus if s.get("product")),
             "has_zip": zp.exists(),
             "zip_bytes": zp.stat().st_size if zp.exists() else 0,
             "has_combined": cp.exists(),
@@ -937,6 +993,65 @@ def api_history_combined(tid: str):
         raise HTTPException(404, "还没有合集 HTML，请先点「重建合集」")
     return FileResponse(str(p), media_type="text/html",
                         filename=f"Aplus_combined_{tid}.html")
+
+
+# ---------------------------------------------------------------- 商品信息导出
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _cd(filename: str) -> str:
+    """HTTP 头只能带 latin-1，中文文件名走 RFC 5987"""
+    from urllib.parse import quote
+    fallback = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def _resolve_dir(tid: str) -> Path:
+    """tid 为空时取最近一次产出"""
+    if tid:
+        d = WEB_OUT / tid
+        if not d.is_dir():
+            raise HTTPException(404, "输出目录不存在")
+        return d
+    dirs = sorted((p for p in WEB_OUT.iterdir()
+                   if p.is_dir() and not p.name.startswith("_")),
+                  key=lambda p: -p.stat().st_mtime)
+    if not dirs:
+        raise HTTPException(404, "还没有任何产出")
+    return dirs[0]
+
+
+@app.get("/api/export/product.xlsx")
+def api_export_product_xlsx(dir: str = ""):
+    d = _resolve_dir(dir)
+    rows = exp.collect(d)
+    if not rows:
+        raise HTTPException(404, "该次任务里没有商品信息（未勾选「商品信息」或全部失败）")
+    name = f"商品信息_{d.name}.xlsx"
+    return Response(content=exp.build_xlsx(rows), media_type=XLSX_MIME,
+                    headers={"Content-Disposition": _cd(name)})
+
+
+@app.get("/api/export/product.csv")
+def api_export_product_csv(dir: str = ""):
+    d = _resolve_dir(dir)
+    rows = exp.collect(d)
+    if not rows:
+        raise HTTPException(404, "该次任务里没有商品信息")
+    name = f"商品信息_{d.name}.csv"
+    return Response(content=exp.build_csv(rows), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": _cd(name)})
+
+
+@app.get("/api/history/{tid}/export/product.xlsx")
+def api_history_product_xlsx(tid: str):
+    return api_export_product_xlsx(tid)
+
+
+@app.get("/api/history/{tid}/export/product.csv")
+def api_history_product_csv(tid: str):
+    return api_export_product_csv(tid)
 
 
 @app.get("/api/open")

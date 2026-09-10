@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """版本与更新源配置 —— 发版时只改这里"""
 
-__version__ = "1.1.0"
-APP_NAME = "A+ 抓取工作台"
+__version__ = "1.2.0"
+APP_NAME = "亚马逊采集工作台"
 
 # GitHub 仓库（owner/repo）。更新检查走它的 Release。
 GITHUB_REPO = "disky1998/aplus-workbench"
 GITHUB_BRANCH = "main"
 
 # 更新资产文件名（Release 里上传的 exe 名）
-ASSET_NAME = "APlusWorkbench.exe"
+ASSET_NAME = "AmazonWorkbench.exe"
 
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/version.json"

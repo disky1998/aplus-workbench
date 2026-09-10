@@ -26,14 +26,14 @@ datas += [
 ]
 
 hiddenimports += [
-    "appicon", "updater", "version", "tray",
+    "appicon", "updater", "version", "tray", "product", "exporter",
     "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto",
     "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets", "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan", "uvicorn.lifespan.on",
     "pystray._win32",
-    "bs4", "lxml", "lxml.etree",
+    "bs4", "lxml", "lxml.etree", "openpyxl", "et_xmlfile",
     "requests", "fastapi", "starlette", "pydantic",
     "anyio", "h11", "click", "sniffio", "idna", "certifi", "charset_normalizer",
 ]
@@ -41,7 +41,7 @@ hiddenimports += [
 EXCLUDES = [
     "tkinter", "matplotlib", "numpy", "pandas", "scipy",
     "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython", "pytest",
-    "notebook", "sqlalchemy", "pytz", "PIL.ImageQt",
+    "notebook", "sqlalchemy", "pytz", "PIL.ImageQt", "pandas",
 ]
 
 a = Analysis(
@@ -65,7 +65,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="APlusWorkbench",
+    name="AmazonWorkbench",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

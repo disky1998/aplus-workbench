@@ -1,18 +1,18 @@
 {
-  "app": "A+ 抓取工作台",
-  "version": "1.1.0",
-  "tag": "v1.1.0",
+  "app": "亚马逊采集工作台",
+  "version": "1.2.0",
+  "tag": "v1.2.0",
   "published": "2026-09-10",
-  "notes": "## v1.1.0\n\n首个发布版本。打包为 Windows 单文件 exe，双击即用，右下角常驻托盘。\n\n### 新增\n\n- **桌面版 exe**：双击直接运行，自动启动本地服务并打开前台页面，右下角托盘常驻\n- **系统托盘菜单**：右键可「打开前台 / 获取更新 / 打开输出目录 / 关于 / 退出」\n- **获取更新**：打开软件后自动在后台检查新版本，发现更新时弹出托盘气泡，界面右上角出现红点提示\n  - 页面内「获取更新」弹窗可查看版本对比与更新说明，一键下载\n  - exe 版下载完成后自动替换并重启，无需手动操作\n- **站点收敛**：只保留阿联酋 / 沙特两个站点选项；粘贴完整链接时仍以链接自带站点为准\n- **版本信息**：环境面板显示当前版本号\n\n### 优化\n\n- 界面重做：浅色 / 深色双主题、动效、胶囊式站点选择、分段式模式切换、Toast 通知、输入实时解析预览\n- 说明文字收进悬停提示，界面更简洁\n- Playwright 内核复用系统目录（`%LOCALAPPDATA%\\ms-playwright`），缺失时可在界面一键下载\n\n### 抓取能力（沿用）\n\n- 普通 A+ / 高级 A+（Premium A+）抓取，桌面端 + 移动端\n- 三种模式：自动判定 / 强制普通 A+（仅桌面端）/ 强制高级 A+（桌面端 + 移动端）\n- 排版还原：内联计算样式，产出可离线打开的单文件 HTML\n- 按 SKU 分节合并 `combined.html`（Shadow DOM 隔离）\n- A+ 图片打包 `aplus_images.zip`（含 `manifest.csv` 来源清单）\n- 历史产出可随时重建合集 / 重新打包图片，不必重新抓取\n\n### 运行要求\n\n- Windows 10 / 11 64 位\n- 首次使用建议在「环境」面板点一次「安装 / 更新内核」（约 150 MB，只需一次）\n\n> 仅用于抓取公开可访问的页面内容做竞品分析，请遵守目标站点使用条款与当地法律。\n",
-  "size": 65686670,
-  "sha256": "f70753242ad43e5ebb276f6a3eba85fa96438980474033abb69fa52771f02fed",
-  "download_url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.1.0/APlusWorkbench.exe",
-  "html_url": "https://github.com/disky1998/aplus-workbench/releases/tag/v1.1.0",
+  "notes": "## v1.2.0\n\n**合并为一个程序**：链接信息抓取（原来的采集器）+ A+ 内容抓取，统一入口、统一 exe。\n\n### 新增\n\n- **商品链接信息抓取**：标题、7.27 商品亮点（小标题）、类目路径、最小类目节点 ID、五点描述、主图（还原原始 master 大图）、品牌、价格、评分、评论数、卖家\n- **「抓取内容」三选一**：`全部`（商品信息 + A+，共用同一个页面一次抓完）/ `商品信息`（不解析 A+，快很多）/ `A+ 内容`\n- **商品信息表导出**：Excel（多列 + 图片 URL 列）与 CSV，一次任务的所有 SKU 汇总成一张表；历史产出也能随时导出\n- 结果表新增「商品信息」列，直接看到标题、亮点、五点条数、主图张数、品牌、价格、评分、类目\n\n### 变更\n\n- 程序更名：**亚马逊采集工作台**（`AmazonWorkbench.exe`）\n- **下载图片**、**有头模式** 改为默认开启（有头模式第一次跑一次过掉验证码，之后会话会被记住）\n- 选中「商品信息」时，A+ 相关设置自动收起\n\n### 保留\n\n- A+ 抓取：普通 / 高级 A+（Premium A+），桌面端 + 移动端，三种模式（自动判定 / 强制普通 / 强制高级）\n- 排版还原单文件 HTML、按 SKU 分节的 `combined.html`、A+ 图片包 `aplus_images.zip`（含 `manifest.csv`）\n- 历史产出可一键重建合集 / 重新打包图片，不必重抓\n- 桌面托盘、启动自动检查更新、一键下载并自动替换重启\n- 浅色 / 深色双主题\n\n### 运行要求\n\n- Windows 10 / 11 64 位\n- 首次使用请在「环境」面板点一次「安装 / 更新内核」（约 150 MB，只需一次）\n",
+  "size": 66200182,
+  "sha256": "b5412974f489f4cff84f20d604cd59f5aeef933d109c1a7294baef80bf6a4a61",
+  "download_url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.2.0/AmazonWorkbench.exe",
+  "html_url": "https://github.com/disky1998/aplus-workbench/releases/tag/v1.2.0",
   "assets": [
     {
-      "name": "APlusWorkbench.exe",
-      "size": 65686670,
-      "url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.1.0/APlusWorkbench.exe",
+      "name": "AmazonWorkbench.exe",
+      "size": 66200182,
+      "url": "https://github.com/disky1998/aplus-workbench/releases/download/v1.2.0/AmazonWorkbench.exe",
       "is_exe": true
     }
   ]

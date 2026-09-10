@@ -172,7 +172,7 @@ def run_tray():
         pystray.MenuItem("退出", do_quit),
     )
     icon = pystray.Icon(
-        "aplus", build_icon_image(64),
+        "amazon-workbench", build_icon_image(64),
         f"{V.APP_NAME} v{V.__version__}", menu)
 
     def on_setup(ic):

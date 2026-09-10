@@ -38,6 +38,8 @@ try:
 except ImportError:
     requests = None
 
+import product as prod
+
 # ---------------------------------------------------------------- 选择器配置
 
 # 亚马逊各时期 / 各站点的 A+ 容器 ID，按顺序尝试
@@ -651,7 +653,7 @@ def looks_blocked(page) -> bool:
 
 
 def prepare_page(context, url: str, scroll: bool = True, timeout: int = 45000,
-                 include_brand_story: bool = False):
+                 include_brand_story: bool = False, wait_aplus: bool = True):
     page = context.new_page()
     page.set_default_timeout(timeout)
     page.goto(url, wait_until="domcontentloaded", timeout=timeout)
@@ -666,6 +668,9 @@ def prepare_page(context, url: str, scroll: bool = True, timeout: int = 45000,
             page.mouse.wheel(0, random.randint(700, 1200))
             page.wait_for_timeout(random.randint(300, 600))
         page.wait_for_timeout(1200)
+
+    if not wait_aplus:
+        return page
 
     # 等 A+ 容器出现，并且要等里面的内容真正被 JS 填进来。
     # 亚马逊的 aplus_feature_div 常先渲染成一个空壳（data-csa-c-slot-id 占位），
@@ -920,7 +925,13 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
               include_brand_story: bool = False, render: bool = False,
               screenshot: bool = False, hires: int = 0,
               folder: str | None = None, state_file: str | None = None,
-              mode: str = "auto"):
+              mode: str = "auto", want: str = "all"):
+    """抓一个 SKU 的一个视图。
+
+    want: all      —— 商品链接信息 + A+ 内容
+          product  —— 只要商品链接信息（不解析 A+，快很多）
+          aplus    —— 只要 A+ 内容
+    """
     key = folder or asin
     url = f"https://www.amazon.{domain}/dp/{asin}"
     ctx = browser_ctx_factory(viewport)
@@ -932,7 +943,8 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
         except Exception:
             pass
         page = prepare_page(ctx, url, scroll=scroll,
-                            include_brand_story=include_brand_story)
+                            include_brand_story=include_brand_story,
+                            wait_aplus=(want != "product"))
         # 持久化上下文模式下 viewport 是固定的，移动端要单独纠正
         if viewport == "mobile":
             try:
@@ -940,13 +952,45 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
             except Exception:
                 pass
         if is_captcha(page) or looks_blocked(page):
-            raise RuntimeError("被亚马逊拦截（验证码页 / 空页面）。建议：--headed --user-data-dir ./profile "
-                               "复用已登录浏览器，或加 --proxy，或调大 --delay")
+            raise RuntimeError("被亚马逊拦截（验证码页 / 空页面）。建议勾选「有头模式」跑一次，"
+                               "过掉验证码后会话会被记住；或加 --proxy，或调大 --delay")
+
+        # ---- 商品链接信息（与 A+ 共用同一个页面，只多跑一段 JS）----
+        product_data = None
+        if want in ("all", "product") and viewport == "desktop":
+            product_data = prod.extract_product(page)
+            if product_data.get("error"):
+                print(f"    [warn] 商品信息：{product_data['error']}")
+                if product_data.get("blocked"):
+                    raise RuntimeError(product_data["error"])
+                product_data = None
+            else:
+                product_data.update({
+                    "url": url, "asin": asin, "domain": domain,
+                    "fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                pdir = out_root / key
+                pdir.mkdir(parents=True, exist_ok=True)
+                (pdir / "product.json").write_text(
+                    json.dumps(product_data, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(f"    [商品] 标题{'✓' if product_data.get('title') else '×'} "
+                      f"亮点{'✓' if product_data.get('highlights') else '×'} "
+                      f"类目{'✓' if product_data.get('category') else '×'} "
+                      f"NodeID{'✓' if product_data.get('nodeId') else '×'} "
+                      f"五点 {len(product_data['bullets'])} 条 "
+                      f"主图 {len(product_data['images'])} 张")
+
+        if want == "product":
+            return {"asin": asin, "viewport": viewport, "url": url,
+                    "product": product_data, "product_only": True}
+
         html = page.content()
         data = parse_aplus(html, asin=asin, viewport=viewport,
                            include_brand_story=include_brand_story, mode=mode)
         data["url"] = url
         data["fetched_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        if product_data:
+            data["product"] = product_data
 
         d = out_root / key / viewport
         d.mkdir(parents=True, exist_ok=True)
