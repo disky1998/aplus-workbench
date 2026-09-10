@@ -116,8 +116,8 @@ class Updater:
     def _explain(self, status: dict) -> str:
         codes = [c for c in (status.get("api"), status.get("raw")) if c]
         if 404 in codes and not self.has_token():
-            return ("读取不到更新信息。若仓库是私有的，请把只读令牌放到程序同目录的 "
-                    "gh_token.txt（或设置环境变量 APLUS_GH_TOKEN）后重试。")
+            return (f"读不到更新信息：{V.GITHUB_REPO} 上还没有 Release 或 version.json，"
+                    f"或该仓库是私有的（私有仓库需要把只读令牌放到程序同目录的 gh_token.txt）。")
         if 404 in codes:
             return (f"还没发布过版本（{V.GITHUB_REPO} 上没有 Release 或 version.json）。"
                     f"首次发布后此页面就能检查更新。")

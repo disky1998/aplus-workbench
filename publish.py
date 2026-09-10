@@ -101,16 +101,8 @@ def main():
         args += ["--notes", f"{V.APP_NAME} {TAG}"]
     run(args)
 
-    # 4. 把只读令牌落到 exe 同目录（私有仓库更新用，不提交、不打进 exe）
-    try:
-        tok = subprocess.run(["gh", "auth", "token"], text=True,
-                             stdout=subprocess.PIPE).stdout.strip()
-        if tok:
-            (HERE / "dist" / "gh_token.txt").write_text(tok, encoding="utf-8")
-            (HERE / "gh_token.txt").write_text(tok, encoding="utf-8")
-            print(f"\n[令牌] 已写入 gh_token.txt（exe 同目录，方便直接检查更新）")
-    except Exception as e:
-        print(f"[令牌] 未写入：{e}")
+    # 4. 仓库为公开时，更新检查与下载都不需要令牌
+    print("\n[令牌] 仓库为 public，更新页可直接下载，无需 gh_token.txt")
 
     print(f"\n[完成] {V.RELEASES_PAGE}")
     print(f"        下载直链 (exe) {V.RELEASES_PAGE.replace('/releases/latest', '')}"
