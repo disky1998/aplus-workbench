@@ -21,8 +21,9 @@ def run(args, allow_fail=False, cwd=HERE):
     args = [str(a) for a in args]
     # 本机的 HTTP_PROXY/HTTPS_PROXY 会拦截 git 的 HTTPS 推送（静默 exit 128），显式绕开
     if args and args[0] == "git":
-        args = ["git", "-c", "http.proxy=", "-c", "https.proxy="] + args[1:]
-    print(f"\n$ {' '.join(args)}")
+        args = ["git", "-c", "http.proxy="] + args[1:]
+    safe = " ".join(a for a in args if "gho_" not in a and "ghp_" not in a)
+    print(f"\n$ {safe}")
     p = subprocess.run(args, cwd=str(cwd), text=True,
                        encoding="utf-8", errors="replace",
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -33,27 +34,19 @@ def run(args, allow_fail=False, cwd=HERE):
     return p
 
 
-def _gh_token() -> str:
-    """取 gh 已登录的 token —— 非交互环境下 credential helper 拉不起来，
-    直接把 token 放进推送 URL 最可靠"""
-    return subprocess.run(["gh", "auth", "token"], text=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.strip()
-
-
 def _git(args, cwd=HERE):
     """不打印的 git 调用（同样绕开代理）"""
-    return subprocess.run(["git", "-c", "http.proxy=", "-c", "https.proxy="] + list(args),
+    return subprocess.run(["git", "-c", "http.proxy="] + list(args),
                           cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 
 def _push(branch: str):
-    """用 token URL 直接推送（origin 只做记录）"""
-    tok = _gh_token()
-    if not tok:
-        raise SystemExit("[失败] 取不到 gh token，请先 gh auth login")
-    auth_url = f"https://x-access-token:{tok}@github.com/{V.GITHUB_REPO}.git"
-    run(["git", "push", "--force", auth_url, f"{branch}:{branch}"])
+    """走 origin 推送（凭据由 gh 配置的 credential helper 提供）
+
+    注意：不要用 `-c https.proxy=` 或把 token 嵌进 URL —— 实测都会让 git 直接退出 128。
+    """
+    run(["git", "push", "-u", "origin", f"{branch}:{branch}"])
 
 
 def main():
