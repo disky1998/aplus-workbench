@@ -18,8 +18,12 @@ NOTES = HERE / "RELEASE_NOTES.md"
 
 
 def run(args, allow_fail=False, cwd=HERE):
-    print(f"\n$ {' '.join(str(a) for a in args)}")
-    p = subprocess.run([str(a) for a in args], cwd=str(cwd), text=True,
+    args = [str(a) for a in args]
+    # 本机的 HTTP_PROXY/HTTPS_PROXY 会拦截 git 的 HTTPS 推送（静默 exit 128），显式绕开
+    if args and args[0] == "git":
+        args = ["git", "-c", "http.proxy=", "-c", "https.proxy="] + args[1:]
+    print(f"\n$ {' '.join(args)}")
+    p = subprocess.run(args, cwd=str(cwd), text=True,
                        encoding="utf-8", errors="replace",
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if p.stdout:
@@ -27,6 +31,13 @@ def run(args, allow_fail=False, cwd=HERE):
     if p.returncode and not allow_fail:
         raise SystemExit(f"[失败] 退出码 {p.returncode}")
     return p
+
+
+def _git(args, cwd=HERE):
+    """不打印的 git 调用（同样绕开代理）"""
+    return subprocess.run(["git", "-c", "http.proxy=", "-c", "https.proxy="] + list(args),
+                          cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 
 def main():
@@ -52,13 +63,12 @@ def main():
              "--private", "--source", ".", "--remote", "origin",
              "--description", f"{V.APP_NAME} · Amazon A+ 内容抓取"])
 
-    remotes = subprocess.run(["git", "remote"], cwd=str(HERE), text=True,
-                             encoding="utf-8", stdout=subprocess.PIPE).stdout
+    remotes = _git(["remote"]).stdout
     if "origin" not in (remotes or "").split():
         run(["git", "remote", "add", "origin",
              f"https://github.com/{V.GITHUB_REPO}.git"])
     run(["git", "branch", "-M", V.GITHUB_BRANCH])
-    run(["git", "push", "-u", "origin", V.GITHUB_BRANCH], allow_fail=True)
+    run(["git", "push", "-u", "origin", V.GITHUB_BRANCH])
 
     # 3. Release：已存在就删掉重建
     exists = subprocess.run(["gh", "release", "view", TAG], cwd=str(HERE),
