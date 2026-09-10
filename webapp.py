@@ -34,10 +34,12 @@ if getattr(sys, "frozen", False) and not os.environ.get("PLAYWRIGHT_BROWSERS_PAT
 import scrape_aplus as sa  # noqa: E402
 import exporter as exp  # noqa: E402
 import product as prodmod  # noqa: E402
+import pool as poolmod  # noqa: E402
 import updater as UPD  # noqa: E402
 import version as V  # noqa: E402
 
 PORT = int(os.environ.get("APLUS_PORT", "8788"))
+POOL_SIZE = int(os.environ.get("APLUS_POOL", "6"))
 
 # HERE 在 exe 里指向解包临时目录（只读），可写数据一律放到 exe 旁边
 BASE = UPD.app_dir()
@@ -49,10 +51,15 @@ WEB_DIR = HERE / "web"
 app = FastAPI(title=V.APP_NAME)
 UPDATER = UPD.Updater()
 
+# 预热浏览器池：6 个标签页共享一份登录态，抓取时 6 路并行
+POOL = poolmod.BrowserPool(BASE, stealth_js=sa.STEALTH_JS,
+                           stealth_args=list(sa.STEALTH_ARGS))
+
 # ---------------------------------------------------------------- 任务管理
 
 TASKS: dict = {}
 TASKS_LOCK = threading.Lock()
+_LOG_LOCK = threading.Lock()          # 并行抓取时 6 个线程会同时写日志
 
 
 class Task:
@@ -70,37 +77,46 @@ class Task:
         self.outdir: Path = WEB_OUT / tid
         self.started = time.time()
         self.stop_flag = False
+        self.workers = 1
         self._q = queue.Queue()
 
     def log(self, msg=""):
         line = str(msg).rstrip()
-        self.logs.append(line)
-        if len(self.logs) > 4000:
-            del self.logs[:1000]
+        with _LOG_LOCK:
+            self.logs.append(line)
+            if len(self.logs) > 4000:
+                del self.logs[:1000]
         self._q.put(line)
 
     def since(self, n):
-        return {"logs": self.logs[n:], "next": len(self.logs)}
+        with _LOG_LOCK:
+            return {"logs": list(self.logs[n:]), "next": len(self.logs)}
 
 
 class LogWriter(io.TextIOBase):
-    """把 scraper 内部的 print 也接进任务日志"""
+    """把 scraper 内部的 print 也接进任务日志（并行模式下多线程会同时写）"""
 
     def __init__(self, task):
         self.task = task
         self.buf = ""
+        self._lock = threading.Lock()
 
     def write(self, s):
-        self.buf += s
-        while "\n" in self.buf:
-            line, self.buf = self.buf.split("\n", 1)
+        with self._lock:
+            self.buf += s
+            lines = []
+            while "\n" in self.buf:
+                line, self.buf = self.buf.split("\n", 1)
+                lines.append(line)
+        for line in lines:
             self.task.log(line)
         return len(s)
 
     def flush(self):
-        if self.buf.strip():
-            self.task.log(self.buf)
-            self.buf = ""
+        with self._lock:
+            rest, self.buf = self.buf, ""
+        if rest.strip():
+            self.task.log(rest)
 
 
 # ---------------------------------------------------------------- 入参解析
@@ -159,7 +175,145 @@ def parse_inputs(text: str):
 
 # ---------------------------------------------------------------- 抓取流程
 
-def run_task(task: Task):
+def _opts_common(o: dict):
+    want = (o.get("want") or "all").lower()
+    if want not in ("all", "product", "aplus"):
+        want = "all"
+    mode = (o.get("aplusMode") or "auto").lower()
+    if mode not in sa.APLUS_MODES:
+        mode = "auto"
+    return want, mode
+
+
+def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
+                 factory=None, state_file=None, page=None, browser=None, tag=""):
+    """抓一个 SKU（含 desktop / mobile 决策），返回结果 entry。
+
+    页面来源：
+      page    —— 复用预热池里已开好的标签页（桌面端，池化模式）
+      browser —— 池化模式下 CDP 连上的浏览器，用来临时开移动端上下文
+      factory —— 非池化模式（自己新建 context）
+    """
+    pre = f"    {tag}" if tag else "    "
+    vps = ["desktop"] if want == "product" else (
+        ["desktop", "mobile"] if (o.get("both") or mode == "premium") else ["desktop"])
+
+    entry = {"sku": sku, "asin": asin, "domain": dom, "viewports": {}, "ok": False,
+             "premium": False, "kind": "", "evidence": [], "product": None, "note": ""}
+
+    # 用下标循环：判定为普通 A+ 后 vps 会被就地移除 mobile
+    i = 0
+    while i < len(vps):
+        if task.stop_flag:
+            break
+        vp = vps[i]
+        data, err = None, None
+        attempts = int(o.get("retry", 2)) + 1
+        for attempt in range(attempts):
+            if task.stop_flag:
+                break
+            try:
+                pool_page = page if (page is not None and vp == "desktop") else None
+                pool_browser = browser if pool_page is None else None
+                # 池化时登录态由共享 profile 维持，不需要再落盘 storage_state
+                sf = str(state_file) if (state_file and pool_page is None) else None
+                data = sa.fetch_one(
+                    factory, asin, dom, vp, True, out_root,
+                    o.get("downloadImages", False),
+                    o.get("includeBrandStory", False),
+                    o.get("render", True),
+                    o.get("screenshot", False),
+                    int(o.get("hires", 0) or 0),
+                    folder=sku, state_file=sf,
+                    mode=mode, want=want,
+                    page=pool_page, browser=pool_browser)
+                err = None
+                break
+            except Exception as e:
+                err = e
+                if attempt < attempts - 1:
+                    w = float(o.get("delay", 6)) * (attempt + 1)
+                    print(f"{pre}[重试 {attempt+1}/{attempts-1}] {e} -> {w:.0f}s")
+                    for _ in range(int(w)):
+                        if task.stop_flag:
+                            break
+                        time.sleep(1)
+        if data is None:
+            entry["note"] = str(err)
+            print(f"{pre}[失败] {err}")
+            i += 1
+            continue
+
+        entry["ok"] = True
+        entry["premium"] = data.get("is_premium_candidate", False)
+        entry["kind"] = data.get("aplus_kind", "")
+        entry["evidence"] = data.get("premium_evidence") or []
+
+        prod = data.get("product")
+        if prod:
+            entry["product"] = {
+                "title": (prod.get("title") or "")[:120],
+                "bullets": len(prod.get("bullets") or []),
+                "images": len(prod.get("images") or []),
+                "highlights": bool(prod.get("highlights")),
+                "category": prod.get("category") or "",
+                "nodeId": prod.get("nodeId") or "",
+                "brand": prod.get("brand") or "",
+                "price": prod.get("price") or "",
+                "rating": prod.get("rating") or "",
+                "reviews": prod.get("reviews") or "",
+                "bulletsSource": prod.get("bulletsSource") or "",
+                "miss": prodmod.missing_fields(prod),
+            }
+
+        if data.get("product_only"):
+            # 只抓商品信息：没有 A+ 结果，直接收工
+            entry["kind"] = "none"
+            entry["ok"] = bool(prod and not prodmod.missing_fields(prod))
+            if not entry["ok"]:
+                entry["note"] = "商品信息不全：" + \
+                    "、".join(prodmod.missing_fields(prod or {}))
+            i += 1
+            continue
+
+        entry["viewports"][vp] = {
+            "has": data.get("has_aplus"),
+            "modules": data.get("module_count"),
+            "images": data.get("image_count"),
+            "maxw": data.get("max_image_width"),
+            "skipped": data.get("mobile_skipped", False),
+        }
+        print(f"{pre}-> {vp}: has={data.get('has_aplus')} "
+              f"模块={data.get('module_count')} 图={data.get('image_count')} "
+              f"{'高级A+' if data.get('is_premium_candidate') else '普通A+'} "
+              f"最大宽={data.get('max_image_width')}")
+        print(f"{pre}   判定依据：{'；'.join(data.get('premium_evidence') or []) or '—'}")
+
+        # 普通 A+ 没有独立移动端版本 —— 移除 mobile 并把原因写回 content.json，
+        # 否则合集里看不出「移动端为什么缺失」
+        want_mobile = (mode == "premium") or (
+            mode == "auto" and (data.get("is_premium_candidate") or o.get("forceMobile")))
+        if vp == "desktop" and "mobile" in vps and not want_mobile:
+            vps.remove("mobile")
+            entry["viewports"]["mobile"] = {"skipped": True}
+            note = ("普通 A+ 无独立移动端版本：移动端与桌面端内容一致"
+                    "（同一套 970 模块等比缩放），已跳过。"
+                    "需要时把「A+ 模式」选为「强制高级 A+（桌面+移动端）」重抓。")
+            data["mobile_skipped"] = True
+            data["mobile_note"] = note
+            try:
+                (out_root / sku / "desktop" / "content.json").write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+            print(f"{pre}[跳过移动端] {note}")
+        i += 1
+
+    return entry
+
+
+def _run_task_serial(task, want, mode):
+    """没预热浏览器时的串行路径（兼容 userDataDir / storage_state 等老参数）"""
     import contextlib
     from playwright.sync_api import sync_playwright
 
@@ -167,18 +321,15 @@ def run_task(task: Task):
     out_root = task.outdir
     out_root.mkdir(parents=True, exist_ok=True)
     items = [(sku, a, d or task.domain) for sku, a, d in task.asins]
-    task.progress = {"total": len(items), "done": 0, "current": ""}
 
     lw = LogWriter(task)
     results = []
     try:
         with contextlib.redirect_stdout(lw), contextlib.redirect_stderr(lw):
-            # 复用登录态：把上次的 cookies 存下来，下次直接带上，
-            # 亚马逊就不会每次都当"全新访客"甩验证码
             state_file = STATE_FILE
             use_state = bool(o.get("persist", True)) and state_file.exists()
-
             print(f"[启动] 共 {len(items)} 个 SKU · 站点 {task.domain}")
+            print(f"[模式] 单线程串行（建议先点「预热浏览器」再抓，更快也不容易被拦）")
             print(f"[登录态] {'复用上次的 cookies（验证码概率更低）' if use_state else '首次运行，结束后自动记住'}")
 
             launch_kwargs = {
@@ -189,6 +340,8 @@ def run_task(task: Task):
                 launch_kwargs["proxy"] = {"server": o["proxy"]}
 
             with sync_playwright() as p:
+                ctx_root = None
+                browser = None
                 if o.get("userDataDir"):
                     ctx_root = p.chromium.launch_persistent_context(
                         o["userDataDir"],
@@ -200,194 +353,50 @@ def run_task(task: Task):
                         return ctx_root
                 else:
                     browser = p.chromium.launch(**launch_kwargs)
-                    contexts = []
 
                     def factory(vp):
                         kw = {}
                         if use_state:
                             kw["storage_state"] = str(state_file)
                         if vp == "mobile":
-                            ctx = browser.new_context(
-                                user_agent=sa.UA_MOBILE,
-                                viewport={"width": 390, "height": 844},
-                                device_scale_factor=3,
-                                is_mobile=True, has_touch=True, locale="en-US", **kw)
+                            kw.update(user_agent=sa.UA_MOBILE,
+                                      viewport={"width": 390, "height": 844},
+                                      device_scale_factor=3,
+                                      is_mobile=True, has_touch=True, locale="en-US")
                         else:
-                            ctx = browser.new_context(
-                                user_agent=random.choice(sa.UA_DESKTOP_POOL),
-                                viewport={"width": 1440, "height": 2400},
-                                locale="en-US", **kw)
-                        contexts.append(ctx)
-                        return ctx
+                            kw.update(user_agent=random.choice(sa.UA_DESKTOP_POOL),
+                                      viewport={"width": 1440, "height": 2400},
+                                      locale="en-US")
+                        return browser.new_context(**kw)
 
-                for idx, (sku, asin, dom) in enumerate(items):
-                    if task.stop_flag:
-                        break
-                    mode = (o.get("aplusMode") or "auto").lower()
-                    if mode not in sa.APLUS_MODES:
-                        mode = "auto"
-                    want = (o.get("want") or "all").lower()
-                    if want not in ("all", "product", "aplus"):
-                        want = "all"
-                    if want == "product":
-                        vps = ["desktop"]           # 商品信息与视口无关，抓一次就够
-                    else:
-                        vps = ["desktop", "mobile"] if (o.get("both") or mode == "premium") else ["desktop"]
-                    task.progress["current"] = f"{sku}({asin})"
-                    entry = {"sku": sku, "asin": asin, "domain": dom, "viewports": {},
-                             "ok": False, "premium": False, "kind": "", "evidence": [],
-                             "product": None, "note": ""}
-                    print(f"\n[{idx+1}/{len(items)}] {sku} = {asin} @ {dom}  [{want} · 模式 {mode}]")
-
-                    # 用下标循环：判定为普通 A+ 后 vps 会被就地移除 mobile
-                    i = 0
-                    while i < len(vps):
+                try:
+                    for idx, (sku, asin, dom) in enumerate(items):
                         if task.stop_flag:
                             break
-                        vp = vps[i]
-                        data, err = None, None
-                        attempts = int(o.get("retry", 2)) + 1
-                        for attempt in range(attempts):
-                            if task.stop_flag:
-                                break
-                            try:
-                                data = sa.fetch_one(
-                                    factory, asin, dom, vp, True, out_root,
-                                    o.get("downloadImages", False),
-                                    o.get("includeBrandStory", False),
-                                    o.get("render", True),
-                                    o.get("screenshot", False),
-                                    int(o.get("hires", 0) or 0),
-                                    folder=sku,
-                                    state_file=str(state_file) if o.get("persist", True) else None,
-                                    mode=mode, want=want)
-                                err = None
-                                break
-                            except Exception as e:
-                                err = e
-                                if attempt < attempts - 1:
-                                    w = float(o.get("delay", 6)) * (attempt + 1)
-                                    print(f"    [重试 {attempt+1}/{attempts-1}] {e} -> {w:.0f}s")
-                                    for _ in range(int(w)):
-                                        if task.stop_flag:
-                                            break
-                                        time.sleep(1)
-                        if data is None:
-                            entry["note"] = str(err)
-                            print(f"    [失败] {err}")
-                            i += 1
-                            continue
-
-                        entry["ok"] = True
-                        entry["premium"] = data.get("is_premium_candidate", False)
-                        entry["kind"] = data.get("aplus_kind", "")
-                        entry["evidence"] = data.get("premium_evidence") or []
-
-                        prod = data.get("product")
-                        if prod:
-                            entry["product"] = {
-                                "title": (prod.get("title") or "")[:120],
-                                "bullets": len(prod.get("bullets") or []),
-                                "images": len(prod.get("images") or []),
-                                "highlights": bool(prod.get("highlights")),
-                                "category": prod.get("category") or "",
-                                "nodeId": prod.get("nodeId") or "",
-                                "brand": prod.get("brand") or "",
-                                "price": prod.get("price") or "",
-                                "rating": prod.get("rating") or "",
-                                "reviews": prod.get("reviews") or "",
-                                "bulletsSource": prod.get("bulletsSource") or "",
-                                "miss": prodmod.missing_fields(prod),
-                            }
-
-                        if data.get("product_only"):
-                            # 只抓商品信息：没有 A+ 结果，直接收工
-                            entry["kind"] = "none"
-                            entry["ok"] = bool(prod and not prodmod.missing_fields(prod))
-                            if not entry["ok"]:
-                                entry["note"] = "商品信息不全：" + \
-                                    "、".join(prodmod.missing_fields(prod or {}))
-                            i += 1
-                            continue
-
-                        entry["viewports"][vp] = {
-                            "has": data.get("has_aplus"),
-                            "modules": data.get("module_count"),
-                            "images": data.get("image_count"),
-                            "maxw": data.get("max_image_width"),
-                            "skipped": data.get("mobile_skipped", False),
-                        }
-                        print(f"    -> {vp}: has={data.get('has_aplus')} "
-                              f"模块={data.get('module_count')} 图={data.get('image_count')} "
-                              f"{'高级A+' if data.get('is_premium_candidate') else '普通A+'} "
-                              f"最大宽={data.get('max_image_width')}")
-                        print(f"       判定依据：{'；'.join(data.get('premium_evidence') or []) or '—'}")
-
-                        # 普通 A+ 没有独立移动端版本 —— 移除 mobile 并把原因写回 content.json，
-                        # 否则合集里看不出「移动端为什么缺失」
-                        want_mobile = (mode == "premium") or (
-                            mode == "auto" and (data.get("is_premium_candidate") or o.get("forceMobile")))
-                        if vp == "desktop" and "mobile" in vps and not want_mobile:
-                            vps.remove("mobile")
-                            entry["viewports"]["mobile"] = {"skipped": True}
-                            note = ("普通 A+ 无独立移动端版本：移动端与桌面端内容一致"
-                                    "（同一套 970 模块等比缩放），已跳过。"
-                                    "需要时把「A+ 模式」选为「强制高级 A+（桌面+移动端）」重抓。")
-                            data["mobile_skipped"] = True
-                            data["mobile_note"] = note
-                            try:
-                                (out_root / sku / "desktop" / "content.json").write_text(
-                                    json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-                            except Exception:
-                                pass
-                            print(f"    [跳过移动端] {note}")
-                        i += 1
-
-                    results.append(entry)
-                    task.results = results
-                    task.progress["done"] = idx + 1
-                    if idx < len(items) - 1 and not task.stop_flag:
-                        d = float(o.get("delay", 6)) + random.uniform(0, 3)
-                        for _ in range(int(d)):
-                            if task.stop_flag:
-                                break
-                            time.sleep(1)
-
-                if o.get("userDataDir"):
-                    ctx_root.close()
-                else:
-                    browser.close()
-
-            # 合并排版页
-            if not task.stop_flag and want != "product" and o.get("buildCombined", True):
-                print("\n[合并] 正在按 SKU 分节生成合集 ...")
-                try:
-                    cp = sa.build_combined_html(out_root, items, task.domain)
-                    task.combined = cp.relative_to(WEB_OUT).as_posix()   # 前端用 /out/<rel>
-                    print(f"[完成] 合集 -> {cp}（{cp.stat().st_size // 1024} KB）")
-                except Exception as e:
-                    print(f"[warn] 合并失败 -> {e}")
-                    traceback.print_exc(file=lw)
-
-            # 图片打包：<SKU>/A+/<desktop|mobile>/<序号>.<ext> + manifest.csv
-            if not task.stop_flag and want != "product" and o.get("packageImages", True):
-                print("[打包] 正在压缩 A+ 图片 ...")
-                try:
-                    zpath = out_root / "aplus_images.zip"
-                    res = sa.package_images(out_root, items, zpath,
-                                            ctx=None, download_missing=False)
-                    if res.get("empty"):
-                        print("[打包] 没有可打包的图片（未勾选「下载图片到本地」或无 A+）")
-                    else:
-                        task.zipfile = zpath.relative_to(WEB_OUT).as_posix()
-                        print(f"[完成] 图片压缩包 -> {zpath}（{res['count']} 张）")
-                        if res.get("missing"):
-                            print(f"[提示] 本地缺 {res['missing']} 张，"
-                                  f"可点「重新打包并补齐图片」补下")
-                except Exception as e:
-                    print(f"[warn] 打包失败 -> {e}")
-                    traceback.print_exc(file=lw)
-
+                        task.progress["current"] = f"{sku}({asin})"
+                        print(f"\n[{idx+1}/{len(items)}] {sku} = {asin} @ {dom}"
+                              f"  [{want} · 模式 {mode}]")
+                        entry = _scrape_item(
+                            task, o, out_root, sku, asin, dom, want, mode,
+                            factory=factory,
+                            state_file=state_file if o.get("persist", True) else None)
+                        results.append(entry)
+                        task.results = list(results)
+                        task.progress["done"] = idx + 1
+                        if idx < len(items) - 1 and not task.stop_flag:
+                            d = float(o.get("delay", 6)) + random.uniform(0, 3)
+                            for _ in range(int(d)):
+                                if task.stop_flag:
+                                    break
+                                time.sleep(1)
+                finally:
+                    try:
+                        if ctx_root is not None:
+                            ctx_root.close()
+                        if browser is not None:
+                            browser.close()
+                    except Exception:
+                        pass
     except Exception as e:
         task.log(f"[致命错误] {e}")
         task.log(traceback.format_exc())
@@ -397,6 +406,135 @@ def run_task(task: Task):
         if task.status == "running":
             task.status = "stopped" if task.stop_flag else "done"
         task.log(f"[结束] 状态={task.status} 用时={time.time()-task.started:.0f}s")
+
+
+def _run_task_pool(task, want, mode, workers):
+    """预热池路径：workers 个线程各自连 CDP，各用一个预热好的标签页"""
+    import contextlib
+    from playwright.sync_api import sync_playwright
+
+    o = task.opts
+    out_root = task.outdir
+    out_root.mkdir(parents=True, exist_ok=True)
+    items = [(sku, a, d or task.domain) for sku, a, d in task.asins]
+    cdp = POOL.cdp_url
+
+    lw = LogWriter(task)
+    results = []
+    rlock = threading.Lock()
+    job_q: "queue.Queue" = queue.Queue()
+    for it in items:
+        job_q.put(it)
+    done_stat = {"n": 0}
+    clock = threading.Lock()
+
+    def worker(slot):
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(cdp)
+                contexts = browser.contexts
+                ctx = contexts[0] if contexts else browser.new_context()
+                pages = list(ctx.pages)
+                page = pages[slot] if slot < len(pages) else ctx.new_page()
+                print(f"[#{slot+1}] 已接入预热标签页")
+                while not task.stop_flag:
+                    try:
+                        sku, asin, dom = job_q.get_nowait()
+                    except queue.Empty:
+                        break
+                    with clock:
+                        done_stat["n"] += 1
+                        n = done_stat["n"]
+                    task.progress["current"] = f"#{slot+1} {sku}"
+                    print(f"\n[{n}/{len(items)}] #{slot+1} {sku} = {asin} @ {dom}"
+                          f"  [{want} · 模式 {mode}]")
+                    entry = _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
+                                         page=page, browser=browser,
+                                         tag=f"#{slot+1} ")
+                    with rlock:
+                        results.append(entry)
+                        task.results = list(results)
+                        task.progress["done"] = len(results)
+                    if not task.stop_flag:
+                        # 6 路并行时把每条之间的等待摊薄
+                        d = float(o.get("delay", 6)) / max(1, workers) + random.uniform(0, 1.2)
+                        for _ in range(int(d)):
+                            if task.stop_flag:
+                                break
+                            time.sleep(1)
+        except Exception as e:
+            print(f"#{slot+1} [错误] 标签页接入失败：{e}")
+
+    try:
+        with contextlib.redirect_stdout(lw), contextlib.redirect_stderr(lw):
+            print(f"[启动] 共 {len(items)} 个 SKU · 站点 {task.domain}")
+            print(f"[模式] {workers} 路并行（复用预热好的标签页，共享同一份登录态）")
+            threads = [threading.Thread(target=worker, args=(i,), daemon=True)
+                       for i in range(workers)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+    except Exception as e:
+        task.log(f"[致命错误] {e}")
+        task.log(traceback.format_exc())
+        task.status = "error"
+
+
+def run_task(task: Task):
+    """入口：预热了就并行，没预热就串行"""
+    o = task.opts
+    want, mode = _opts_common(o)
+    out_root = task.outdir
+    out_root.mkdir(parents=True, exist_ok=True)
+    items = [(sku, a, d or task.domain) for sku, a, d in task.asins]
+    task.progress = {"total": len(items), "done": 0, "current": ""}
+
+    psize = int(POOL.status().get("size") or 0)
+    if POOL.is_ready() and psize:
+        want_workers = int(o.get("workers") or psize)
+        workers = max(1, min(psize, want_workers, len(items) or 1))
+        task.workers = workers
+        _run_task_pool(task, want, mode, workers)
+    else:
+        task.workers = 1
+        _run_task_serial(task, want, mode)
+
+    task.log(f"[用时] {time.time()-task.started:.0f}s")
+    if task.status == "running":
+        task.status = "stopped" if task.stop_flag else "done"
+
+    # 抓完统一产出：合集 HTML + 图片包（A+ 模式才有）
+    if not task.stop_flag and want != "product":
+        lw = LogWriter(task)
+        import contextlib
+        with contextlib.redirect_stdout(lw), contextlib.redirect_stderr(lw):
+            if o.get("buildCombined", True):
+                print("\n[合并] 正在按 SKU 分节生成合集 ...")
+                try:
+                    cp = sa.build_combined_html(out_root, items, task.domain)
+                    task.combined = cp.relative_to(WEB_OUT).as_posix()
+                    print(f"[完成] 合集 -> {cp}（{cp.stat().st_size // 1024} KB）")
+                except Exception as e:
+                    print(f"[warn] 合并失败 -> {e}")
+                    traceback.print_exc(file=lw)
+            if o.get("packageImages", True):
+                print("[打包] 正在压缩 A+ 图片 ...")
+                try:
+                    zpath = out_root / "aplus_images.zip"
+                    res = sa.package_images(out_root, items, zpath,
+                                            ctx=None, download_missing=False)
+                    if res.get("empty"):
+                        print("[打包] 没有可打包的图片（未勾选「下载图片」或无 A+）")
+                    else:
+                        task.zipfile = zpath.relative_to(WEB_OUT).as_posix()
+                        print(f"[完成] 图片压缩包 -> {zpath}（{res['count']} 张）")
+                except Exception as e:
+                    print(f"[warn] 打包失败 -> {e}")
+                    traceback.print_exc(file=lw)
+        lw.flush()
+
+    task.log(f"[结束] 状态={task.status} 用时={time.time()-task.started:.0f}s")
 
 
 # ---------------------------------------------------------------- 环境检测
@@ -587,6 +725,7 @@ class RunRequest(BaseModel):
     persist: bool = True
     buildCombined: bool = True        # 抓完生成合集 HTML
     packageImages: bool = True        # 抓完打包 A+ 图片
+    workers: int = 0                  # 并行路数；0 = 用预热池的规模
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -740,7 +879,7 @@ def api_task(tid: str, since: int = 0):
         raise HTTPException(404, "任务不存在")
     d = t.since(since)
     d.update({"id": t.id, "status": t.status, "progress": t.progress,
-              "results": t.results, "combined": t.combined,
+              "results": t.results, "combined": t.combined, "workers": t.workers,
               "zipfile": t.zipfile, "outdir": str(t.outdir)})
     return d
 
@@ -760,6 +899,34 @@ def api_tasks():
     return [{"id": t.id, "status": t.status, "progress": t.progress,
              "combined": t.combined, "started": t.started}
             for t in sorted(TASKS.values(), key=lambda x: -x.started)]
+
+
+# ---------------------------------------------------------------- 浏览器预热池
+
+class PreheatRequest(BaseModel):
+    size: int = POOL_SIZE
+    site: str = "ae"
+
+
+@app.post("/api/pool/preheat")
+def api_pool_preheat(req: PreheatRequest):
+    size = max(1, min(int(req.size or POOL_SIZE), 12))
+    if not POOL.preheat_async(size, req.site):
+        raise HTTPException(409, "正在预热中，请稍候")
+    return {"ok": True, "size": size}
+
+
+@app.get("/api/pool/status")
+def api_pool_status():
+    st = POOL.status()
+    st["default_size"] = POOL_SIZE
+    return st
+
+
+@app.post("/api/pool/close")
+def api_pool_close():
+    POOL.close()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- 已有产物的再加工
@@ -863,120 +1030,6 @@ def api_history():
     return {"items": scan_history()}
 
 
-def _dir_items(tid: str):
-    """从输出目录还原 [(sku, asin, domain)]，供打包 / 合并使用"""
-    d = WEB_OUT / tid
-    if not d.is_dir():
-        raise HTTPException(404, "输出目录不存在")
-    items = []
-    for sub in sorted(d.iterdir()):
-        if not sub.is_dir():
-            continue
-        asin, dom = "", "com"
-        for vp in ("desktop", "mobile"):
-            cj = sub / vp / "content.json"
-            if not cj.exists():
-                continue
-            try:
-                meta = json.loads(cj.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            asin = meta.get("asin") or asin
-            m = re.search(r"amazon\.([a-z]{2,3}(?:\.[a-z]{2,3})?)/", meta.get("url") or "")
-            if m:
-                dom = m.group(1)
-            break
-        items.append((sub.name, asin or sub.name, dom))
-    return items
-
-
-class RebuildRequest(BaseModel):
-    doCombined: bool = True
-    doPackage: bool = True
-    downloadMissing: bool = True      # 本地缺图时用浏览器补下载
-    hires: int = 0
-    domain: str = "com"
-
-
-def _rebuild_work(t: "Task", tid: str, req: RebuildRequest):
-    import contextlib
-    lw = LogWriter(t)
-    try:
-        with contextlib.redirect_stdout(lw), contextlib.redirect_stderr(lw):
-            d = WEB_OUT / tid
-            items = _dir_items(tid)
-            print(f"[重建] {d} · {len(items)} 个 SKU")
-            if not items:
-                print("[重建] 目录里没有可用的 content.json，无法重建")
-                return
-
-            if req.doCombined:
-                print("[合并] 正在生成合集 HTML ...")
-                try:
-                    cp = sa.build_combined_html(d, items, req.domain)
-                    t.combined = cp.relative_to(WEB_OUT).as_posix()
-                    print(f"[完成] 合集 -> {cp}（{cp.stat().st_size // 1024} KB）")
-                except Exception as e:
-                    print(f"[warn] 合并失败 -> {e}")
-                    traceback.print_exc(file=lw)
-
-            if req.doPackage:
-                print("[打包] 正在压缩 A+ 图片 ...")
-                try:
-                    if req.downloadMissing:
-                        print("[打包] 会先用浏览器补齐本地缺失的图片（走已登录上下文，最稳）")
-                        from playwright.sync_api import sync_playwright
-                        with sync_playwright() as p:
-                            br = p.chromium.launch(headless=True, args=list(sa.STEALTH_ARGS))
-                            ctx = br.new_context(user_agent=sa.UA_DESKTOP, locale="en-US",
-                                                 viewport={"width": 1440, "height": 1200})
-                            try:
-                                res = sa.package_images(d, items, d / "aplus_images.zip",
-                                                        ctx=ctx, download_missing=True,
-                                                        hires=req.hires)
-                            finally:
-                                br.close()
-                    else:
-                        res = sa.package_images(d, items, d / "aplus_images.zip",
-                                                ctx=None, download_missing=False,
-                                                hires=req.hires)
-
-                    if res.get("empty"):
-                        print("[打包] 没有可打包的图片 —— 该目录下没有已下载的图片文件")
-                    else:
-                        t.zipfile = f"{tid}/aplus_images.zip"
-                        print(f"[完成] 图片压缩包 -> {d / 'aplus_images.zip'}（{res['count']} 张）")
-                        if res.get("downloaded"):
-                            print(f"[补下] 本次补下载 {res['downloaded']} 张")
-                        if res.get("missing"):
-                            print(f"[提示] 仍有 {res['missing']} 张缺失（链接可能已失效）")
-                except Exception as e:
-                    print(f"[warn] 打包失败 -> {e}")
-                    traceback.print_exc(file=lw)
-    except Exception as e:
-        t.log(f"[致命错误] {e}")
-        t.status = "error"
-    finally:
-        lw.flush()
-        if t.status == "running":
-            t.status = "done"
-        t.log("[结束]")
-
-
-@app.post("/api/history/{tid}/rebuild")
-def api_rebuild(tid: str, req: RebuildRequest):
-    d = WEB_OUT / tid
-    if not d.is_dir():
-        raise HTTPException(404, "输出目录不存在")
-    rid = f"rebuild-{tid}-{int(time.time()) % 100000}"
-    t = Task(rid, [], req.domain, req.dict())
-    t.outdir = d
-    with TASKS_LOCK:
-        TASKS[rid] = t
-    threading.Thread(target=_rebuild_work, args=(t, tid, req), daemon=True).start()
-    return {"task_id": rid}
-
-
 @app.get("/api/history/{tid}/download/zip")
 def api_history_zip(tid: str):
     p = WEB_OUT / tid / "aplus_images.zip"
@@ -1033,14 +1086,15 @@ def api_export_product_xlsx(dir: str = ""):
                     headers={"Content-Disposition": _cd(name)})
 
 
-@app.get("/api/export/product.csv")
-def api_export_product_csv(dir: str = ""):
+@app.get("/api/export/tool.xlsx")
+def api_export_tool_xlsx(dir: str = ""):
+    """可直接上传到「批量文案重构」的导入表（前 8 列严格对齐其导入要求）"""
     d = _resolve_dir(dir)
     rows = exp.collect(d)
     if not rows:
-        raise HTTPException(404, "该次任务里没有商品信息")
-    name = f"商品信息_{d.name}.csv"
-    return Response(content=exp.build_csv(rows), media_type="text/csv; charset=utf-8",
+        raise HTTPException(404, "该次任务里没有商品信息，无法生成改写导入表")
+    name = f"批量改写导入_{d.name}.xlsx"
+    return Response(content=exp.build_tool_xlsx(rows), media_type=XLSX_MIME,
                     headers={"Content-Disposition": _cd(name)})
 
 
@@ -1049,9 +1103,9 @@ def api_history_product_xlsx(tid: str):
     return api_export_product_xlsx(tid)
 
 
-@app.get("/api/history/{tid}/export/product.csv")
-def api_history_product_csv(tid: str):
-    return api_export_product_csv(tid)
+@app.get("/api/history/{tid}/export/tool.xlsx")
+def api_history_tool_xlsx(tid: str):
+    return api_export_tool_xlsx(tid)
 
 
 @app.get("/api/open")

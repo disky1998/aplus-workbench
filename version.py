@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """版本与更新源配置 —— 发版时只改这里"""
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 APP_NAME = "亚马逊采集工作台"
 
 # GitHub 仓库（owner/repo）。更新检查走它的 Release。

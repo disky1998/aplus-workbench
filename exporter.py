@@ -123,6 +123,7 @@ def build_xlsx(rows: list[dict], domain: str = "") -> bytes:
 
 
 def build_csv(rows: list[dict]) -> bytes:
+    """保留：CSV 的列与 Excel 完全一致，已由 build_xlsx 取代（界面只留一个入口）"""
     max_img = min(max([len(r["images"]) for r in rows] or [1]), 15)
     heads, _ = _headers_and_row(rows[0] if rows else {}, max_img)
     sio = io.StringIO()
@@ -132,3 +133,60 @@ def build_csv(rows: list[dict]) -> bytes:
         _, vals = _headers_and_row(r, max_img)
         w.writerow(vals)
     return ("\ufeff" + sio.getvalue()).encode("utf-8")
+
+
+# 前 8 列顺序必须与「批量文案重构」工具的 Excel 导入要求严格一致：
+#   SKU / 原标题 / 原亮点 / 五点1..五点5
+# 后面的列是溯源信息，导入时会被工具忽略。
+TOOL_HEAD = ["SKU", "原标题", "原亮点", "五点1", "五点2", "五点3", "五点4", "五点5"]
+TOOL_TRACE = ["ASIN", "站点", "采集链接", "类目路径", "最小类目节点ID", "品牌",
+              "价格", "评分", "评论数", "五点来源"]
+
+
+def build_tool_xlsx(rows: list[dict]) -> bytes:
+    """可直接上传到「批量文案重构」的导入表（xlsx）"""
+    max_img = min(max([len(r["images"]) for r in rows] or [1]), 15)
+    heads = list(TOOL_HEAD) + list(TOOL_TRACE) + [f"原主图{i}" for i in range(1, max_img + 1)]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "批量改写导入"
+    ws.append(heads)
+    for i in range(1, 9):                    # 前 8 列标成重点色，方便一眼核对
+        c = ws.cell(row=1, column=i)
+        c.fill = PatternFill("solid", fgColor="C55A11")
+        c.font = HEADER_FONT
+        c.alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    for i in range(9, len(heads) + 1):
+        c = ws.cell(row=1, column=i)
+        c.fill = HEADER_FILL
+        c.font = HEADER_FONT
+        c.alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    ws.freeze_panes = "A2"
+    ws.row_dimensions[1].height = 26
+
+    for r in rows:
+        bl = r.get("bullets") or []
+        vals = [r.get("sku", ""), r.get("title", ""), r.get("highlights", "")]
+        vals += [bl[i] if i < len(bl) else "" for i in range(5)]
+        vals += [r.get(k, "") for k in ("asin", "domain", "url", "category",
+                                        "nodeId", "brand", "price", "rating",
+                                        "reviews", "bulletsSource")]
+        imgs = r.get("images") or []
+        vals += [imgs[i] if i < len(imgs) else "" for i in range(max_img)]
+        ws.append(vals)
+        for c in ws[ws.max_row]:
+            c.alignment = CELL_ALIGN
+
+    for col in ws.columns:
+        w = 12
+        for c in col[:300]:
+            if c.value is None:
+                continue
+            longest = max((len(seg) for seg in str(c.value).split("\n")), default=0)
+            w = max(w, longest * 1.05 + 2)
+        ws.column_dimensions[get_column_letter(col[0].column)].width = min(58, w)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

@@ -237,6 +237,11 @@ def do_about(icon, item):
 
 def do_quit(icon, item):
     try:
+        import webapp
+        webapp.POOL.close()          # 预热浏览器是独立进程，退出时要一起带走
+    except Exception:
+        pass
+    try:
         icon.stop()
     except Exception:
         pass

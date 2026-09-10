@@ -65,25 +65,29 @@ python -m playwright install chromium
 功能：
 
 - **输入框直接粘贴**商品链接或 ASIN（混贴、换行、逗号分隔都行，自动识别站点与去重，边打字边显示识别结果）
+- 🔥 **浏览器预热 + 多路并行**：一键启动 6 个标签页（有头浏览器，共享同一份登录态 —— 任意一个里登录 / 过验证码即可），之后 6 个线程各用一个标签页同时抓，实测 3 路并行 34 秒跑完 3 个 SKU（单抓一个商品本身要 18-19 秒）。没预热时「开始抓取」置灰；也可勾选「跳过预热」走原来的单线程
 - **站点**：阿联酋 `ae` / 沙特 `sa`；粘贴完整链接时以链接自带站点为准（美站、英站等都能直接抓）
+- **抓取内容三选一**：全部（商品信息 + A+，共用同一个页面一次抓完）/ 商品信息（不解析 A+，快很多）/ A+ 内容
 - **A+ 抓取模式三选一**：自动判定（推荐）/ 强制普通 A+（仅桌面端）/ 强制高级 A+（桌面端 + 移动端），判定依据直接写在结果表里
-- **自动检测本机 Chrome 版本**（注册表 + 安装目录扫描 + PowerShell 兜底），并列出**匹配的 chromedriver 下载链接**（Chrome for Testing 官方精确版 + npmmirror 国内镜像 + 官方入口页）
 - **一键安装 / 更新 Playwright 内核**（抓取真正依赖的浏览器，不需要 chromedriver）
 - **获取更新**：启动自动检查 + 手动检查，页面内查看版本对比与更新说明，一键下载（exe 版自动替换重启）
-- 实时日志、进度条、每 SKU 结果表（类型 / 判定依据 / 模块数 / 图宽 / 移动端状态）
-- **两个产物可随时下载**：`combined.html`（按 SKU 分节的合集）与 `aplus_images.zip`（A+ 图片包 + `manifest.csv`）
-- **历史产出区**：抓取时忘了勾选也没关系 —— 任何已有的输出目录都能一键「重建合集 / 重新打包图片」，缺图会自动用浏览器上下文补下载，不必重抓
+- 实时日志、进度条、结果表（SKU/ASIN · 标题 · 关键数据 · 状态，超过 20 条自动分页）
+- **两张导出表**：`商品信息表`（标题/亮点/类目/NodeID/五点/主图/品牌/价格/评分/评论/卖家）与`批量改写导入表`（前 8 列严格对齐「批量文案重构」的导入要求，可直接上传）
+- `combined.html`（按 SKU 分节的合集）与 `aplus_images.zip`（A+ 图片包 + `manifest.csv`）在每次抓取结束时自动生成，历史产出区随时可下载
 - 浅色 / 深色双主题
 
 | 接口 | 说明 |
 |---|---|
 | `GET /api/env` | Chrome 版本、驱动链接、Playwright 内核状态、是否已有登录态 |
 | `GET /api/version` | 当前版本、仓库、是否 exe 版 |
+| `POST /api/pool/preheat` | 预热浏览器（body: size / site） |
+| `GET /api/pool/status` | 预热进度（state / ready / steps） |
+| `POST /api/pool/close` | 关闭预热浏览器 |
 | `GET /api/update/check?force=1` | 检查更新（走 GitHub Release，回退 version.json） |
 | `POST /api/update/download` | 下载新版 exe（exe 版会自替换重启） |
 | `GET /api/update/status` | 下载进度 |
 | `GET /api/driver/link?version=` | 指定版本的驱动下载候选 |
-| `POST /api/run` | 提交任务（body: text/domain/both/aplusMode/hires/…） |
+| `POST /api/run` | 提交任务（body: text/domain/both/aplusMode/workers/…） |
 | `GET /api/task/{id}?since=n` | 增量日志 + 进度 + 结果 |
 | `POST /api/task/{id}/stop` | 停止任务 |
 | `GET /api/history` | 扫描 `web_out/*`，列出所有已有产出及其类型/视图/产物状态 |

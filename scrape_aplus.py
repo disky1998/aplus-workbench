@@ -652,15 +652,20 @@ def looks_blocked(page) -> bool:
         return False
 
 
-def prepare_page(context, url: str, scroll: bool = True, timeout: int = 45000,
-                 include_brand_story: bool = False, wait_aplus: bool = True):
-    page = context.new_page()
+def navigate(page, url: str, scroll: bool = True, timeout: int = 45000,
+             include_brand_story: bool = False, wait_aplus: bool = True):
+    """在**已有页面**上打开 URL 并等 A+ 渲染完。
+
+    与 prepare_page 的区别：这里不创建、也不关闭页面 —— 池化模式复用的正是
+    预热好的标签页，页面所有权归调用方。
+    """
     page.set_default_timeout(timeout)
     page.goto(url, wait_until="domcontentloaded", timeout=timeout)
 
     if is_captcha(page):
-        page.close()
-        raise RuntimeError("触发亚马逊验证码（Robot Check）。建议：--headed --user-data-dir ./profile 复用已登录浏览器，或加 --proxy")
+        raise RuntimeError("触发亚马逊验证码（Robot Check）。建议：勾选「有头模式」并先点"
+                           "「预热浏览器」，在弹出窗口里过掉验证码（会话会被记住），"
+                           "或加代理、调大间隔")
 
     # 滚动整页，触发 A+ 图片懒加载
     if scroll:
@@ -695,6 +700,22 @@ def prepare_page(context, url: str, scroll: bool = True, timeout: int = 45000,
         if wait_aplus_filled(page, cid, timeout=12000):
             break
     return page
+
+
+def prepare_page(context, url: str, scroll: bool = True, timeout: int = 45000,
+                 include_brand_story: bool = False, wait_aplus: bool = True):
+    """新建页面并打开（非池化模式用）—— 失败时自己收尾"""
+    page = context.new_page()
+    try:
+        return navigate(page, url, scroll=scroll, timeout=timeout,
+                        include_brand_story=include_brand_story,
+                        wait_aplus=wait_aplus)
+    except Exception:
+        try:
+            page.close()
+        except Exception:
+            pass
+        raise
 
 
 def wait_aplus_filled(page, cid: str, timeout: int = 12000) -> bool:
@@ -925,35 +946,63 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
               include_brand_story: bool = False, render: bool = False,
               screenshot: bool = False, hires: int = 0,
               folder: str | None = None, state_file: str | None = None,
-              mode: str = "auto", want: str = "all"):
+              mode: str = "auto", want: str = "all",
+              page=None, browser=None):
     """抓一个 SKU 的一个视图。
 
     want: all      —— 商品链接信息 + A+ 内容
           product  —— 只要商品链接信息（不解析 A+，快很多）
           aplus    —— 只要 A+ 内容
+
+    页面来源三选一：
+      page     —— 复用预热池里已存在的标签页（桌面端，池化模式；调用方拥有，不关）
+      browser  —— CDP 连上的浏览器，临时新开上下文（移动端用，UA/视口必须换）
+      都为空    —— 走 browser_ctx_factory（非池化模式）
     """
     key = folder or asin
     url = f"https://www.amazon.{domain}/dp/{asin}"
-    ctx = browser_ctx_factory(viewport)
-    page = None
+    own = page is None          # 页面/上下文是否由本函数创建并负责关闭
+    ctx = None
     try:
-        # 抹掉自动化指纹（每个 context 注入一次即可）
-        try:
-            ctx.add_init_script(STEALTH_JS)
-        except Exception:
-            pass
-        page = prepare_page(ctx, url, scroll=scroll,
-                            include_brand_story=include_brand_story,
-                            wait_aplus=(want != "product"))
-        # 持久化上下文模式下 viewport 是固定的，移动端要单独纠正
+        if own:
+            if browser is not None:
+                if viewport == "mobile":
+                    ctx = browser.new_context(
+                        user_agent=UA_MOBILE,
+                        viewport={"width": 390, "height": 844},
+                        device_scale_factor=3, is_mobile=True, has_touch=True,
+                        locale="en-US")
+                else:
+                    ctx = browser.new_context(
+                        user_agent=random.choice(UA_DESKTOP_POOL),
+                        viewport={"width": 1440, "height": 2400},
+                        locale="en-US")
+            else:
+                ctx = browser_ctx_factory(viewport)
+            # 抹掉自动化指纹（每个 context 注入一次即可）
+            try:
+                ctx.add_init_script(STEALTH_JS)
+            except Exception:
+                pass
+            page = prepare_page(ctx, url, scroll=scroll,
+                                include_brand_story=include_brand_story,
+                                wait_aplus=(want != "product"))
+        else:
+            # 复用预热标签页：只导航，不创建也不关闭
+            ctx = page.context
+            navigate(page, url, scroll=scroll,
+                     include_brand_story=include_brand_story,
+                     wait_aplus=(want != "product"))
+        # 持久化上下文 / 池化标签页的 viewport 不固定，移动端要单独纠正
         if viewport == "mobile":
             try:
                 page.set_viewport_size({"width": 390, "height": 844})
             except Exception:
                 pass
         if is_captcha(page) or looks_blocked(page):
-            raise RuntimeError("被亚马逊拦截（验证码页 / 空页面）。建议勾选「有头模式」跑一次，"
-                               "过掉验证码后会话会被记住；或加 --proxy，或调大 --delay")
+            raise RuntimeError("被亚马逊拦截（验证码页 / 空页面）。建议勾选「有头模式」并先"
+                               "点「预热浏览器」，过掉验证码后会话会被记住；"
+                               "或加代理、调大间隔")
 
         # ---- 商品链接信息（与 A+ 共用同一个页面，只多跑一段 JS）----
         product_data = None
@@ -1034,19 +1083,28 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
             data["downloaded_images"] = got
             if failed:
                 data["download_failed"] = failed
-                print(f"    [warn] {failed} 张图片下载失败（可用「重新打包」补齐）")
+                print(f"    [warn] {failed} 张图片下载失败（重跑该 SKU 可补齐）")
             print(f"    [图片] 已下载 {got}/{len(data['images'])} 张 -> {d / 'images'}")
         return data
     finally:
-        # 关浏览器前把登录态落盘，下次任务直接复用（少挨验证码）
-        if state_file:
-            try:
-                ctx.storage_state(path=str(state_file))
-            except Exception:
-                pass
-        if page:
-            page.close()
-        ctx.close()
+        # 只有自己创建的页面 / 上下文才负责收尾；池化标签页要留着下一次用
+        if own:
+            # 关浏览器前把登录态落盘，下次任务直接复用（少挨验证码）
+            if state_file and ctx is not None:
+                try:
+                    ctx.storage_state(path=str(state_file))
+                except Exception:
+                    pass
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+            if ctx is not None:
+                try:
+                    ctx.close()
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------------- 合并成一个 HTML

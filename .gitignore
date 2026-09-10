@@ -13,7 +13,10 @@ dist/
 web_out/
 _update/
 profiles/
+pool_profile/
+pool_profile_dbg/
 profile_storage_state.json
+logs/
 out/
 
 # 访问令牌（私有仓库更新用，只放本地）

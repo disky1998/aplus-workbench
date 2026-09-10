@@ -481,6 +481,31 @@ tbody tr:last-child td{border-bottom:0}
 .skel{height:12px;border-radius:6px;background:linear-gradient(90deg,var(--line2) 25%,var(--line) 37%,var(--line2) 63%);
   background-size:400% 100%;animation:sk 1.4s linear infinite}
 @keyframes sk{from{background-position:100% 0}to{background-position:-100% 0}}
+
+/* ============================ 浏览器预热池 ============================ */
+.pool{border:1px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--surface2)}
+.pool-hd{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink2)}
+.pool-hd .dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:none;
+  transition:background .3s var(--ease)}
+.pool-hd .dot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent);
+  animation:poolPulse 1.8s ease-in-out infinite}
+.pool-hd .dot.warn{background:var(--warn)}
+@keyframes poolPulse{0%,100%{opacity:1}50%{opacity:.45}}
+.pool-steps{margin-top:8px;display:none;flex-direction:column;gap:2px;max-height:120px;overflow:auto}
+.pool-steps.open{display:flex}
+.pool-steps div{font:11.5px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dim)}
+.pool-steps div.ok{color:var(--ink2)}
+.pool-act{margin-top:9px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pool-act .sw{padding:0}
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:9px;
+  padding:10px 16px;border-top:1px solid var(--line2);background:var(--surface2)}
+.pager button{padding:4px 11px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink2);font-size:12px;cursor:pointer;
+  transition:all .18s var(--ease)}
+.pager button:hover:not(:disabled){border-color:var(--accent-line);color:var(--ink)}
+.pager button:disabled{opacity:.4;cursor:default}
+.pager .pg{font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.one{max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -649,6 +674,22 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
             </div>
           </div>
 
+          <div class="field">
+            <label class="f">浏览器预热</label>
+            <div class="pool">
+              <div class="pool-hd"><span class="dot" id="poolDot"></span>
+                <span id="poolMsg">未预热</span></div>
+              <div class="pool-steps" id="poolSteps"></div>
+              <div class="pool-act">
+                <button class="btn sm" id="btnPreheat">预热浏览器（6）</button>
+                <button class="btn ghost sm" id="btnPoolClose">关闭浏览器</button>
+                <label class="sw" title="不预热就直接串行抓取（慢，且更容易被拦）">
+                  <input type="checkbox" id="skipPool"><span class="track"></span>
+                  <span class="txt" style="font-size:11.5px">跳过预热</span></label>
+              </div>
+            </div>
+          </div>
+
           <div class="actions">
             <button class="btn primary full" id="btnRun">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6c0 .8.9 1.3 1.6.9l10.6-6.8c.6-.4.6-1.4 0-1.8L9.6 4.3C8.9 3.9 8 4.4 8 5.2z"/></svg>
@@ -656,7 +697,8 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
             </button>
             <button class="btn danger" id="btnStop" disabled style="flex:none;width:96px">停止</button>
           </div>
-          <div style="font-size:11.5px;color:var(--dim);margin-top:9px;text-align:center" id="runInfo"></div>
+          <div style="font-size:11.5px;color:var(--dim);margin-top:9px;text-align:center" id="runTip"></div>
+          <div style="font-size:11.5px;color:var(--dim);margin-top:3px;text-align:center" id="runInfo"></div>
         </div>
       </div>
     </div>
@@ -710,7 +752,7 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
   <div class="card" style="--i:4;margin-top:16px">
     <div class="card-hd"><span class="bar"></span>历史产出
       <span class="spacer"></span>
-      <span style="font-size:11px;color:var(--dim);font-weight:400;margin-right:4px">可随时重建，不需重抓</span>
+      <span style="font-size:11px;color:var(--dim);font-weight:400;margin-right:4px">表格随时可下载</span>
       <button class="btn ghost sm" id="btnHistReload">刷新</button>
     </div>
     <div class="card-bd"><div id="histBox"><div class="empty">加载中…</div></div></div>
@@ -739,6 +781,9 @@ const $ = id => document.getElementById(id);
 const SITE_LIST = [["ae","阿联酋"],["sa","沙特"]];
 let curTask = null, logIdx = 0, pollTimer = null, runStart = 0, tickTimer = null;
 let updInfo = null, updPoll = null, appVersion = '', hintedBlock = false;
+let poolState = null, poolPoll = null;
+let lastResults = [], resPage = 1;
+const PAGE_SIZE = 20, POOL_N = 6;
 
 /* ---------------- 主题 ---------------- */
 (function(){
@@ -952,6 +997,10 @@ function debounce(fn,ms){ let t; return (...a)=>{clearTimeout(t);t=setTimeout(()
 $('btnRun').onclick = async ()=>{
   const text = $('txt').value;
   if(!text.trim()){ toast('先粘贴 ASIN 或商品链接','err'); return; }
+  if(!canRun()){
+    toast('请先点「预热浏览器」；或勾选「跳过预热」用串行方式抓取', 'err', 5200);
+    return;
+  }
   const body = {
     text, domain: $('domain').value,
     want: $('want').value,
@@ -963,10 +1012,12 @@ $('btnRun').onclick = async ()=>{
     headed: $('headed').checked, proxy: $('proxy').value.trim(), userDataDir: '',
     persist: $('persist').checked,
     buildCombined: $('buildCombined').checked,
+    workers: (poolState && poolState.ready) ? (poolState.size || POOL_N) : 0,
     packageImages: $('packageImages').checked
   };
   if(body.packageImages) body.downloadImages = true;
 
+  resPage = 1; lastResults = [];
   setRunning(true);
   hintedBlock = false;
   $('log').className = 'logbox idle'; $('log').innerHTML = ''; logIdx = 0;
@@ -1009,7 +1060,7 @@ document.addEventListener('keydown', e=>{
 });
 
 function setRunning(on){
-  $('btnRun').disabled = on;
+  $('btnRun').disabled = on || !canRun();
   $('btnStop').disabled = !on;
   $('progTrack').classList.toggle('active', on);
 }
@@ -1110,59 +1161,10 @@ function renderProgress(d){
     if(blocked && !hintedBlock){
       hintedBlock = true;
       $('foldAdv').classList.add('open');
-      toast('被亚马逊拦了 —— 勾选「有头模式」再跑一次，在弹出窗口里过掉验证码即可，'
-            + '之后的会话会被记住', 'err', 9000);
+      toast('被亚马逊拦了 —— 先点「预热浏览器」，在弹出的窗口里过掉验证码，'
+            + '之后 6 个标签页都会带着这份会话', 'err', 9000);
     }
-    const rows = d.results.map(r=>{
-      const kind = r.kind || (r.premium ? 'premium' : 'standard');
-      const tag = !r.ok
-        ? '<span class="badge err">失败</span>'
-        : (kind === 'premium' ? '<span class="badge ok">高级 A+</span>'
-           : kind === 'standard' ? '<span class="badge dim">普通 A+</span>'
-           : '<span class="badge dim">未抓 A+</span>');
-      const noA = (r.viewports?.desktop?.has === false) ? ' <span class="badge err">无 A+</span>' : '';
-      const ev = (r.evidence && r.evidence.length)
-        ? `<div class="why">${esc(r.evidence.join('；'))}</div>` : '';
-      const dv = r.viewports?.desktop || {};
-      const mv = r.viewports?.mobile || {};
-      const hasA = Object.keys(r.viewports || {}).length > 0;
-      const mob = !hasA ? '<span style="color:var(--dim)">—</span>'
-        : mv.skipped ? '<span class="badge dim">无独立版</span>'
-        : (mv.has === undefined ? '<span style="color:var(--dim)">—</span>'
-           : (mv.has ? '<span class="badge ok">已抓</span>' : '<span class="badge err">无</span>'));
-
-      const p = r.product;
-      const pcell = p
-        ? `<div style="font-size:12px;color:var(--ink)">${esc(p.title || '—')}</div>
-           <div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
-             ${p.highlights ? '<span class="badge go">亮点</span>' : ''}
-             <span class="badge ${p.bullets ? 'ok' : 'warn'}">五点 ${p.bullets}</span>
-             <span class="badge ${p.images ? 'ok' : 'warn'}">主图 ${p.images}</span>
-             ${p.brand ? `<span class="badge dim">${esc(p.brand)}</span>` : ''}
-             ${p.price ? `<span class="badge dim">${esc(p.price)}</span>` : ''}
-             ${p.rating ? `<span class="badge dim">★${esc(p.rating)}</span>` : ''}
-           </div>
-           ${p.category ? `<div class="why">${esc(p.category)}${p.nodeId ? ` · node ${esc(p.nodeId)}` : ''}</div>` : ''}`
-        : '<span style="color:var(--dim)">—</span>';
-
-      return `<tr>
-        <td><span class="sku">${esc(r.sku||r.asin)}</span>
-          <div class="sub"><a href="https://www.amazon.${r.domain}/dp/${r.asin}" target="_blank">${esc(r.asin)}</a> · ${esc(r.domain)}</div></td>
-        <td>${pcell}</td>
-        <td>${tag}${noA}${ev}</td>
-        <td style="font-variant-numeric:tabular-nums;white-space:nowrap">${
-          hasA ? `${dv.modules ?? '—'} <span style="color:var(--dim)">/</span> ${dv.images ?? '—'}`
-                : '<span style="color:var(--dim)">—</span>'}${
-          dv.maxw ? `<div class="why">宽 ${dv.maxw}</div>` : ''}</td>
-        <td>${mob}</td>
-        <td style="color:var(--ink2)">${esc(r.note||'')}</td>
-      </tr>`;
-    }).join('');
-    $('results').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
-        <th>SKU</th><th>商品信息</th><th>A+ 类型</th><th>模块 / 图</th><th>移动端</th><th>备注</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>`;
-    $('results').classList.add('filled');
-    $('resCount').textContent = `${d.results.length} 条`;
+    renderResults(d.results);
   } else if(!$('results').classList.contains('filled')){
     emptyResults('还没有任务', '粘贴 ASIN 或商品链接后开始');
   }
@@ -1170,8 +1172,8 @@ function renderProgress(d){
   const btns = [];
   const hasProduct = (d.results || []).some(r => r.product);
   if(hasProduct || dirId){
-    btns.push(`<a href="/api/export/product.xlsx?dir=${encodeURIComponent(dirId)}"><button class="btn sm">商品信息表 Excel</button></a>`);
-    btns.push(`<a href="/api/export/product.csv?dir=${encodeURIComponent(dirId)}"><button class="btn sm">CSV</button></a>`);
+    btns.push(`<a href="/api/export/product.xlsx?dir=${encodeURIComponent(dirId)}"><button class="btn sm">商品信息表</button></a>`);
+    btns.push(`<a href="/api/export/tool.xlsx?dir=${encodeURIComponent(dirId)}"><button class="btn sm">批量改写导入表</button></a>`);
   }
   if(d.combined){
     btns.push(`<a href="/out/${d.combined}" target="_blank"><button class="btn sm">打开合集</button></a>`);
@@ -1180,23 +1182,144 @@ function renderProgress(d){
   if(d.zipfile){
     btns.push(`<a href="/api/history/${dirId}/download/zip"><button class="btn sm">下载图片包</button></a>`);
   }
-  const done = ['done','stopped'].includes(d.status);
-  if(dirId && (d.combined || d.zipfile || done)){
-    btns.push(`<button class="btn sm" data-rebuild="${esc(dirId)}" data-do="combined">重建合集</button>`);
-    btns.push(`<button class="btn sm" data-rebuild="${esc(dirId)}" data-do="package">重打包图片</button>`);
+  if(dirId){
     btns.push(`<button class="btn ghost sm" onclick="fetch('/api/open?path=${encodeURIComponent(dirId)}')">打开目录</button>`);
   }
-  let tip = '';
-  if(done && !d.combined && !d.zipfile && dirId){
-    tip = '无合集 / 图片包';
-  }
-  $('combinedBox').innerHTML = btns.length
-    ? `<div class="hintbar">${btns.join('')}${tip?`<span style="font-size:11.5px;color:var(--dim)">${tip}</span>`:''}</div>`
-    : '';
-  $('combinedBox').querySelectorAll('button[data-rebuild]').forEach(b=>{
-    b.onclick = () => doRebuild(b.dataset.rebuild, b.dataset.do);
-  });
+  $('combinedBox').innerHTML = btns.length ? `<div class="hintbar">${btns.join('')}</div>` : '';
 }
+
+/* ---------------- 结果表：精简列 + 分页 ---------------- */
+function renderResults(list){
+  lastResults = list || [];
+  const total = lastResults.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(resPage > pages) resPage = pages;
+  if(resPage < 1) resPage = 1;
+  const slice = lastResults.slice((resPage-1)*PAGE_SIZE, resPage*PAGE_SIZE);
+
+  const rows = slice.map(r=>{
+    const kind = r.kind || (r.premium ? 'premium' : 'standard');
+    const p = r.product;
+    const hasA = Object.keys(r.viewports || {}).length > 0;
+    const st = !r.ok ? '<span class="badge err">失败</span>'
+      : (!hasA ? '<span class="badge ok">商品</span>'
+         : (kind === 'premium' ? '<span class="badge ok">高级 A+</span>'
+            : '<span class="badge dim">普通 A+</span>'));
+    const data = p
+      ? `<span class="badge ${p.bullets?'ok':'warn'}">五点 ${p.bullets}</span>
+         <span class="badge ${p.images?'ok':'warn'}">图 ${p.images}</span>
+         ${p.highlights?'<span class="badge go">亮点</span>':''}
+         ${p.price?`<span class="badge dim">${esc(p.price)}</span>`:''}
+         ${p.rating?`<span class="badge dim">★${esc(p.rating)}</span>`:''}`
+      : '<span style="color:var(--dim)">—</span>';
+    const note = (r.note || '').slice(0, 46);
+    return `<tr>
+      <td><span class="sku">${esc(r.sku||r.asin)}</span>
+        <div class="sub"><a href="https://www.amazon.${r.domain}/dp/${r.asin}" target="_blank">${esc(r.asin)}</a></div></td>
+      <td><div class="one" title="${esc((p&&p.title)||'')}">${esc((p&&p.title)||'—')}</div></td>
+      <td style="white-space:nowrap">${data}</td>
+      <td>${st}${note?`<div class="why">${esc(note)}</div>`:''}</td>
+    </tr>`;
+  }).join('');
+
+  $('results').innerHTML = `<div class="tbl-wrap"><table><thead><tr>
+      <th style="width:128px">SKU / ASIN</th><th>标题</th>
+      <th style="width:200px">关键数据</th><th style="width:146px">状态</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    ${total>PAGE_SIZE?`<div class="pager">
+      <button id="pgPrev" ${resPage<=1?'disabled':''}>上一页</button>
+      <span class="pg">${resPage} / ${pages} · 共 ${total} 条</span>
+      <button id="pgNext" ${resPage>=pages?'disabled':''}>下一页</button>
+    </div>`:''}`;
+  $('results').classList.add('filled');
+  const pv = $('pgPrev'), nx = $('pgNext');
+  if(pv) pv.onclick = ()=>{ resPage--; renderResults(lastResults); };
+  if(nx) nx.onclick = ()=>{ resPage++; renderResults(lastResults); };
+  $('resCount').textContent = total ? `${total} 条` : '';
+}
+
+/* ---------------- 浏览器预热池 ---------------- */
+function canRun(){
+  if($('skipPool').checked) return true;
+  return !!(poolState && poolState.ready);
+}
+
+async function refreshPool(){
+  try{
+    poolState = await (await fetch('/api/pool/status')).json();
+  }catch(e){ poolState = null; }
+  applyPool();
+}
+
+function applyPool(){
+  const st = poolState || {};
+  const dot = $('poolDot');
+  dot.className = 'dot ' + (st.ready ? 'on' : (st.state && st.state !== 'idle' ? 'warn' : ''));
+  let msg;
+  if(st.ready) msg = `已就绪 · ${st.size} 路并行（可在浏览器里先登录）`;
+  else if(st.state === 'starting') msg = st.message || '预热中…';
+  else if(st.state === 'error') msg = '预热失败：' + (st.error || '');
+  else if(st.state === 'closing') msg = '正在关闭…';
+  else msg = '未预热 · 不预热将单线程抓取（慢且更易被拦）';
+  $('poolMsg').textContent = msg;
+
+  const steps = st.steps || [];
+  const box = $('poolSteps');
+  if(steps.length){
+    box.classList.add('open');
+    box.innerHTML = steps.map(s=>
+      `<div class="${s.ok?'ok':''}">${s.ok?'✓':'×'} ${esc(s.text)}</div>`).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  $('btnPreheat').disabled = (st.state === 'starting');
+  $('btnPreheat').textContent = st.ready ? `重新预热（${POOL_N}）` : `预热浏览器（${POOL_N}）`;
+
+  if(!$('btnStop').disabled) return;          // 运行中不去动开始按钮
+  const ok = canRun();
+  $('btnRun').disabled = !ok;
+  $('runTip').textContent = ok
+    ? (st.ready ? `将用 ${st.size} 路并行抓取` : '串行模式（已跳过预热）')
+    : '请先点「预热浏览器」；或勾选「跳过预热」用串行方式抓';
+}
+
+function startPoolPoll(){
+  clearInterval(poolPoll);
+  poolPoll = setInterval(async ()=>{
+    await refreshPool();
+    const st = poolState || {};
+    if(st.ready){
+      clearInterval(poolPoll);
+      toast(`预热完成：${st.size} 个标签页共享同一份登录态，可以开始了`, 'ok', 5600);
+    }else if(st.state === 'error'){
+      clearInterval(poolPoll);
+      toast('预热失败：' + (st.error || ''), 'err', 7000);
+    }else if(st.state === 'idle'){
+      clearInterval(poolPoll);
+    }
+  }, 1200);
+}
+
+$('btnPreheat').onclick = async ()=>{
+  try{
+    const r = await fetch('/api/pool/preheat', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({size: POOL_N, site: $('domain').value})});
+    const d = await r.json();
+    if(!r.ok){ toast(d.detail || '预热失败', 'err'); return; }
+    $('poolSteps').classList.remove('open');
+    toast(`正在预热 ${d.size} 个标签页，浏览器窗口马上弹出…`, 'info', 5000);
+    startPoolPoll();
+  }catch(e){ toast(e.message, 'err'); }
+};
+
+$('btnPoolClose').onclick = async ()=>{
+  await fetch('/api/pool/close', {method:'POST'});
+  await refreshPool();
+  toast('已关闭预热浏览器', 'info', 2200);
+};
+
+$('skipPool').onchange = ()=>{ applyPool(); };
 
 /* ---------------- 历史产出 ---------------- */
 async function loadHistory(){
@@ -1234,48 +1357,16 @@ async function loadHistory(){
         <div class="skus">${chips}</div>
         <div class="acts">
           ${it.has_product?`<a href="/api/export/product.xlsx?dir=${encodeURIComponent(it.id)}"><button class="btn sm">商品信息表</button></a>`:''}
-          ${it.has_product?`<a href="/api/export/product.csv?dir=${encodeURIComponent(it.id)}"><button class="btn ghost sm">CSV</button></a>`:''}
-          <button class="btn sm" data-rb="${esc(it.id)}" data-do="combined">重建合集</button>
-          <button class="btn sm" data-rb="${esc(it.id)}" data-do="package">重打包图片</button>
-          <button class="btn ghost sm" data-rb="${esc(it.id)}" data-do="both">两者都重建</button>
+          ${it.has_product?`<a href="/api/export/tool.xlsx?dir=${encodeURIComponent(it.id)}"><button class="btn sm">批量改写导入表</button></a>`:''}
           ${it.has_combined?`<a href="/api/history/${esc(it.id)}/download/combined"><button class="btn sm">合集 HTML</button></a>`:''}
           ${it.has_zip?`<a href="/api/history/${esc(it.id)}/download/zip"><button class="btn sm">图片压缩包</button></a>`:''}
           <button class="btn ghost sm" onclick="fetch('/api/open?path=${encodeURIComponent(it.dir)}')">定位</button>
         </div>
       </div>`;
     }).join('')}</div>`;
-    $('histBox').querySelectorAll('button[data-rb]').forEach(b=>{
-      b.onclick = () => doRebuild(b.dataset.rb, b.dataset.do);
-    });
   }catch(e){
     $('histBox').innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
   }
-}
-
-async function doRebuild(tid, what){
-  const body = {
-    doCombined: what !== 'package',
-    doPackage: what !== 'combined',
-    downloadMissing: true,
-    hires: +$('hires').value || 0,
-    domain: $('domain').value
-  };
-  try{
-    const r = await fetch(`/api/history/${tid}/rebuild`, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-    const d = await r.json();
-    if(!r.ok){ toast(d.detail || '启动失败','err'); return; }
-    curTask = d.task_id; logIdx = 0;
-    runStart = Date.now(); startTick();
-    $('log').className = 'logbox idle'; $('log').innerHTML = '';
-    $('logCard').classList.remove('collapsed');
-    $('logCard').scrollIntoView({block:'nearest', behavior:'smooth'});
-    setRunning(true);
-    setProgress(0, '重建中…');
-    $('runInfo').textContent = `重建 ${tid}`;
-    toast('已开始重建', 'info');
-    startPoll(loadHistory);
-  }catch(e){ toast(e.message,'err'); }
 }
 
 $('btnHistReload').onclick = ()=>{ loadHistory(); toast('已刷新','info',1500); };
@@ -1422,6 +1513,8 @@ window.addEventListener('load', layoutSegs);      // 字体加载后重算指示
 window.addEventListener('resize', layoutSegs);
 loadEnv();
 loadHistory();
+refreshPool();
+setInterval(refreshPool, 5000);
 setTimeout(()=>checkUpdate(true), 2200);   // 打开后自动检查更新
 </script>
 </body>
