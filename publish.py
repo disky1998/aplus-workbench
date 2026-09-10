@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,23 @@ EXE = HERE / "dist" / V.ASSET_NAME
 NOTES = HERE / "RELEASE_NOTES.md"
 
 
+GIT_ENV = dict(os.environ,
+               GIT_TERMINAL_PROMPT="0",      # 绝不弹交互提示
+               GCM_INTERACTIVE="never",
+               GIT_ASKPASS="echo")
+
+
+def _ensure_git_auth():
+    """让 git 用 gh 的凭据（非交互环境下 credential manager 会拉不起来）"""
+    subprocess.run(["git", "config", "--local", "--unset-all", "credential.helper"],
+                   cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "--local", "credential.helper", ""],
+                   cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "--local",
+                    "credential.https://github.com.helper", "!gh auth git-credential"],
+                   cwd=str(HERE), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def run(args, allow_fail=False, cwd=HERE):
     args = [str(a) for a in args]
     # 本机的 HTTP_PROXY/HTTPS_PROXY 会拦截 git 的 HTTPS 推送（静默 exit 128），显式绕开
@@ -24,7 +42,7 @@ def run(args, allow_fail=False, cwd=HERE):
         args = ["git", "-c", "http.proxy="] + args[1:]
     safe = " ".join(a for a in args if "gho_" not in a and "ghp_" not in a)
     print(f"\n$ {safe}")
-    p = subprocess.run(args, cwd=str(cwd), text=True,
+    p = subprocess.run(args, cwd=str(cwd), text=True, env=GIT_ENV,
                        encoding="utf-8", errors="replace",
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if p.stdout:
@@ -38,7 +56,7 @@ def _git(args, cwd=HERE):
     """不打印的 git 调用（同样绕开代理）"""
     return subprocess.run(["git", "-c", "http.proxy="] + list(args),
                           cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                          env=GIT_ENV, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 
 def _push(branch: str):
@@ -54,6 +72,9 @@ def main():
         raise SystemExit(f"找不到 {EXE}\n先运行 build_exe.bat")
 
     print(f"=== 发布 {V.APP_NAME} {TAG} ===")
+
+    # 0. 确保 git 用 gh 的凭据（非交互环境下必须）
+    _ensure_git_auth()
 
     # 1. version.json
     run([sys.executable, "make_release.py"])
