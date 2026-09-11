@@ -61,9 +61,12 @@ APLUS_FALLBACK_SELECTORS = [
 # 兜底命中的容器里，这些关键词一律排除
 EXCLUDE_KEYWORDS = [
     "brandstory", "brand_story",   # 品牌故事（默认排除）
+    "sustainabilitystory",         # 可持续故事（也不是 A+）
     "relatedcontent",              # 关联推荐位
     "btffeaturedcontent",          # 底部推荐内容
 ]
+# class 里出现这些也按排除处理（品牌故事的模块 class 带 apm-brand / brand-story）
+EXCLUDE_CLASS_RE = re.compile(r"brand[-_]?story|apm-brand|sustainability[-_]?story", re.I)
 
 
 def active_container_ids(include_brand_story: bool = False) -> list:
@@ -82,6 +85,68 @@ def is_excluded(node_id: str, include_brand_story: bool) -> bool:
         if kw in low:
             return True
     return False
+def node_is_excluded(node, include_brand_story: bool = False) -> bool:
+    """节点自身**或任一祖先**命中排除关键词 → 排除。
+
+    ⚠️ 必须查祖先链：亚马逊的品牌故事块内部会套一个 <div id="aplus">，
+    直接按 id 取 #aplus 会取到品牌故事本身（实测 B08TSSDWFL）。
+    """
+    cur, depth = node, 0
+    while cur is not None and depth < 12:
+        if is_excluded(cur.get("id") or "", include_brand_story):
+            return True
+        cls = " ".join(cur.get("class") or [])
+        if not include_brand_story and EXCLUDE_CLASS_RE.search(cls):
+            return True
+        cur = cur.parent
+        depth += 1
+    return False
+
+
+def is_brand_module(m, include_brand_story: bool = False) -> bool:
+    """品牌故事模块即使在合法容器里也要剔掉"""
+    if include_brand_story:
+        return False
+    txt = (m.get("id") or "") + " " + " ".join(m.get("class") or [])
+    return bool(EXCLUDE_CLASS_RE.search(txt))
+
+
+def brand_image_set(soup) -> set:
+    """页面里所有品牌故事 / 可持续故事的图片 URL（用于兜底过滤）"""
+    urls = set()
+    for n in soup.select('[id*="brandstory" i], [class*="brandstory" i], '
+                         '[id*="brand-story" i], [class*="brand-story" i], '
+                         '[id*="sustainabilitystory" i]'):
+        for u in extract_images(n):
+            urls.add(u)
+    return urls
+
+
+def extract_slides(module) -> list:
+    """轮播模块的每一屏（图 + 文案），按 -slide-N 的数字序号排序。
+
+    原页面的轮播是 JS 驱动的横向轨道（viewport overflow:hidden + 固定宽度轨道），
+    只克隆 DOM 的话第二屏之后全被裁掉，所以这里显式把每一屏都取出来。
+    """
+    out = []
+    for s in module.select('[id*="-slide-"]'):
+        m = re.search(r"-slide-(\d+)\s*$", s.get("id") or "")
+        imgs = extract_images(s)
+        txt = clean_text(s.get_text(" ", strip=True))
+        if not imgs and not txt:
+            continue
+        out.append({"index": int(m.group(1)) if m else len(out),
+                    "images": imgs, "text": txt})
+    out.sort(key=lambda x: x["index"])
+    if not out:                                  # 没有 -slide-N 命名时退化为卡片
+        for i, s in enumerate(module.select(".a-carousel-card")):
+            imgs = extract_images(s)
+            txt = clean_text(s.get_text(" ", strip=True))
+            if imgs or txt:
+                out.append({"index": i, "images": imgs, "text": txt})
+    return out
+
+
 # A+ 内部模块（高级 A+ 每个模块是一个 cel_widget）
 MODULE_SELECTORS = [
     '[data-cel-widget^="aplus"]',
@@ -94,6 +159,11 @@ PREMIUM_WIDTH_HINT = 1464   # 高级 A+（Premium A+）模块设计宽度
 STANDARD_WIDTH_MAX = 970     # 普通 A+ 内容区最大宽度，超过即说明是高级 A+
 # 高级 A+ 的辅助证据：模块 class 里常带 premium 字样
 PREMIUM_CLASS_HINTS = ("premium", "aplus-premium", "premium-aplus")
+# 普通 A+ 的类名证据
+STANDARD_CLASS_HINTS = ("aplus-standard", "3p-module")
+# ⚠️ 判定高级 A+ 的图宽阈值必须 ≥1400：普通 A+ 的模块图宽实测能到 1000px，
+#    用 970 当阈值会把普通 A+ 误判成高级 A+（B08TSSDWFL 就是这么错的）
+PREMIUM_WIDTH_STRICT = 1400
 
 # 抓取模式：
 #   auto     —— 自动判定（普通 A+ 只抓桌面端；高级 A+ 抓桌面端 + 移动端）
@@ -253,15 +323,18 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
     soup = BeautifulSoup(html, "lxml")
 
     # 1) 收集所有 A+ 容器
+    #    用 find_all 而不是 find：同一页面里可能有多处 id="aplus"
+    #    （品牌故事块内部就套了一个），只取第一个会取到品牌故事。
     containers = []
     for cid in active_container_ids(include_brand_story):
-        n = soup.find(id=cid)
-        if n:
+        for n in soup.find_all(id=cid):
+            if node_is_excluded(n, include_brand_story):
+                continue
             containers.append((cid, n))
     if not containers:
         for sel in APLUS_FALLBACK_SELECTORS:
             for n in soup.select(sel):
-                if is_excluded(n.get("id", ""), include_brand_story):
+                if node_is_excluded(n, include_brand_story):
                     continue
                 containers.append((sel, n))
 
@@ -273,11 +346,10 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
         filtered.append((name, node))
     containers = filtered or containers
 
-    # aplus_feature_div 是老兼容容器，现在多数只装 "Visit the Store" 推荐卡片
-    # （图宽 166 左右的商品网格），不是 A+ 图文。若 #aplus 有实质内容就丢掉它。
-    main = next((n for name, n in containers if name == "aplus"), None)
-    if main is not None and (main.find_all("img") or clean_text(main.get_text(" ", strip=True))):
-        containers = [(name, n) for name, n in containers if name != "aplus_feature_div"]
+    # 注意：这里以前会在「#aplus 有内容」时丢掉 aplus_feature_div —— 实测是错的。
+    # 很多页面真正的 A+ 就放在 aplus_feature_div 里，而 #aplus 反而是品牌故事块
+    # 内部那个假容器（B08TSSDWFL）。现在品牌故事已按祖先链排除、同名 id 也全遍历，
+    # 所以只需要上面的嵌套去重，不要再按名字丢容器。
 
     # 丢掉空容器（有 A+ 时亚马逊仍会输出空的品牌故事占位 div）
     containers = [
@@ -310,6 +382,8 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
 
     html_parts, all_modules, all_images, all_videos, text_parts = [], [], [], [], []
     premium_class_hits: list = []
+    standard_class_hits: list = []
+    _brand_imgs = set() if include_brand_story else brand_image_set(soup)
 
     for name, node in containers:
         html_parts.append(str(node))
@@ -325,49 +399,63 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
             mods = [c for c in node.find_all("div", recursive=False)] or [node]
 
         for i, m in enumerate(mods):
-            imgs = extract_images(m)
+            # 品牌故事模块即使在合法容器里也要剔掉
+            if is_brand_module(m, include_brand_story):
+                continue
+            slides = extract_slides(m)
+            if slides:
+                # 轮播：按 slide 顺序取图（DOM 里 slide-2 可能排在 slide-0 前面）
+                imgs = [u for s in slides for u in s["images"]]
+            else:
+                imgs = extract_images(m)
+            t = clean_text(m.get_text(" ", strip=True))
+            if not imgs and len(t) < 20:          # aplus-mantle 这类空壳不计入
+                continue
             # 模块宽度取「模块内所有图的最大宽度」——只看第一张会被小图标带偏
             w = None
             for _img in m.find_all("img"):
                 _bw, _ = img_size_from_url(raw_img_url(_img))
                 if _bw and (w is None or _bw > w):
                     w = _bw
-            # 高级 A+ 辅助证据：模块 class 里带 premium 字样
+            # 高级 A+ / 普通 A+ 的类名证据
             cls = " ".join(m.get("class") or []).lower()
             if any(h in cls for h in PREMIUM_CLASS_HINTS) and cls not in premium_class_hits:
                 premium_class_hits.append(cls[:60])
+            if any(h in cls for h in STANDARD_CLASS_HINTS) and cls not in standard_class_hits:
+                standard_class_hits.append(cls[:60])
             # 页面里存在重复 id（同一个 #aplus 出现两次），不去重会把图片数翻倍
             for _u in imgs:
                 if _u not in all_images:
                     all_images.append(_u)
             all_videos.extend(extract_video(m))
-            t = clean_text(m.get_text(" ", strip=True))
             text_parts.append(t)
             all_modules.append({
                 "index": i,
                 "container": name,
-                "type": guess_module_type(m),
+                "type": "carousel" if slides else guess_module_type(m),
                 "text": t,
                 "images": imgs,
+                "slides": slides,
+                "slide_count": len(slides),
                 "videos": extract_video(m),
                 "image_width_hint": w,
             })
 
+        # 兜底：把模块切分没覆盖到的图片也收进来（品牌故事的图排除掉）
         for u in extract_images(node):
-            if u not in all_images:
-                all_images.append(u)
+            if u in _brand_imgs or u in all_images:
+                continue
+            all_images.append(u)
 
-    # 2) 是否高级 A+：图宽证据 + class 证据，任一命中即算
+    # 2) 是否高级 A+：**类名证据优先**，图宽只作兜底
+    #    （普通 A+ 的模块图宽实测能到 1000px，按图宽判会误判）
     widths = [m["image_width_hint"] for m in all_modules if m["image_width_hint"]]
     mx = max(widths) if widths else 0
     evidence: list = []
-    if mx >= PREMIUM_WIDTH_HINT:
-        evidence.append(f"模块图宽 {mx}px ≥ {PREMIUM_WIDTH_HINT}px")
-    elif mx > STANDARD_WIDTH_MAX:
-        evidence.append(f"模块图宽 {mx}px 超过普通 A+ 上限 {STANDARD_WIDTH_MAX}px")
-    for _c in premium_class_hits:
-        evidence.append(f"模块含高级 A+ 类名（{_c}）")
-    auto_premium = bool(evidence)
+    if premium_class_hits:
+        evidence.append(f"高级 A+ 类名：{premium_class_hits[0]}")
+    elif mx >= PREMIUM_WIDTH_STRICT:
+        evidence.append(f"模块图宽 {mx}px ≥ {PREMIUM_WIDTH_STRICT}px（高级 A+ 设计宽度）")
 
     mode = mode if mode in APLUS_MODES else "auto"
     if mode == "premium":
@@ -377,9 +465,12 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
         is_premium = False
         evidence = ["手动指定：普通 A+"]
     else:
-        is_premium = auto_premium
+        is_premium = bool(evidence)
         if not evidence:
-            evidence = [f"模块图宽最大 {mx or '-'}px，未达高级 A+ 阈值"]
+            kind_hint = f"普通 A+ 类名：{standard_class_hits[0]}" if standard_class_hits \
+                else "无 premium 类名"
+            evidence = [f"{kind_hint}，最大图宽 {mx or '-'}px"
+                        f"（未达 {PREMIUM_WIDTH_STRICT}px）"]
 
     # 2b) 移动端会把 1464 的图居中裁剪成 x=332,w=800，此时取 x+w（裁剪右边界）
     #     作为源图宽度下界即可判定：>970 就不可能是普通 A+
@@ -792,19 +883,75 @@ JS_RENDER = r"""
       el.querySelectorAll("img").length > 0 ||
       (el.innerText || "").trim().length >= 20);
 
-  // 1) 找到有内容的容器
-  const ids = cfg.ids;
+  // 品牌故事 / 关联推荐：自身或任一祖先命中关键词就排除
+  // （亚马逊会把 id="aplus" 套在品牌故事块内部，只按 id 取会取到品牌故事）
+  const EXCL_CLS = /brand[-_]?story|apm-brand|sustainability[-_]?story/i;
+  const isExcluded = (el) => {
+    let cur = el, d = 0;
+    while (cur && d < 12) {
+      const id = (cur.id || "").toLowerCase().replace(/[-_]/g, "");
+      for (const kw of (cfg.exclude || [])) if (id.indexOf(kw) > -1) return true;
+      const cls = (cur.getAttribute && cur.getAttribute("class")) || "";
+      if (!cfg.brandStory && EXCL_CLS.test(cls)) return true;
+      cur = cur.parentElement; d++;
+    }
+    return false;
+  };
+
+  // 轮播离线化：原页面用 JS 驱动横向轨道（viewport overflow:hidden + 轨道固定宽度，
+  // 实测 3510px），只克隆 DOM 的话第二屏之后全被裁掉、看不到。
+  // 这里改成「横向可滚动的静态排布」，每一屏的图和版式都完整保留。
+  const normalizeCarousel = (root) => {
+    const set = (el, prop, val) => el.style.setProperty(prop, val, "important");
+    root.querySelectorAll(".a-carousel-viewport, .a-carousel-container").forEach(vp => {
+      set(vp, "overflow", "visible");
+      set(vp, "overflow-x", "auto");
+      set(vp, "height", "auto");
+      set(vp, "max-height", "none");
+      set(vp, "width", "100%");
+      const tracks = vp.querySelectorAll("ol.a-carousel, ul.a-carousel");
+      const fixTrack = (tr) => {
+        set(tr, "display", "flex");
+        set(tr, "flex-wrap", "nowrap");
+        set(tr, "gap", "10px");
+        set(tr, "width", "auto");
+        set(tr, "max-width", "none");
+        set(tr, "margin", "0");
+        set(tr, "padding", "0");
+        set(tr, "transform", "none");
+        set(tr, "left", "auto");
+        set(tr, "position", "static");
+        set(tr, "list-style", "none");
+      };
+      if (tracks.length) tracks.forEach(fixTrack); else fixTrack(vp);
+      vp.querySelectorAll(".a-carousel-card, li").forEach(li => {
+        set(li, "flex", "0 0 auto");
+        set(li, "width", "auto");
+        set(li, "max-width", "100%");
+        set(li, "margin", "0");
+        set(li, "position", "static");
+        set(li, "transform", "none");
+        set(li, "visibility", "visible");
+        set(li, "left", "auto");
+      });
+    });
+    // 分页圆点 / 首屏索引这类 JS 控件在离线页里没有意义
+    root.querySelectorAll(
+      "input.a-carousel-firstvisibleitem, .a-carousel-firstvisibleitem, .aplus-pagination-dots"
+    ).forEach(n => n.remove());
+  };
+
+  // 1) 找到有内容的容器（与 Python 侧解析逻辑保持一致）
   let roots = [];
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (hasContent(el)) roots.push({ id: id, el: el });
+  for (const id of cfg.ids) {
+    // 同一 id 可能出现多次（品牌故事内部也套了一个 id="aplus"），必须全取
+    document.querySelectorAll('[id="' + id + '"]').forEach(el => {
+      if (isExcluded(el) || !hasContent(el)) return;
+      roots.push({ id: id, el: el });
+    });
   }
-  // 去重：#aplus 常常嵌在 #aplus_feature_div 里，两个都收就会把内容抓两遍
+  // 嵌套去重：#aplus 常常嵌在 #aplus_feature_div 里，两个都收会抓两遍
   roots = roots.filter(r => !roots.some(o => o !== r && o.el.contains(r.el)));
-  // aplus_feature_div 是老兼容容器，#aplus 有内容时丢掉它（与解析逻辑保持一致）
-  if (roots.some(r => r.id === "aplus")) {
-    roots = roots.filter(r => r.id !== "aplus_feature_div");
-  }
   if (!roots.length) return null;
 
   // 2) 清掉会干扰离线渲染的节点（原页面与克隆体同步删除，保证两棵树结构一致）
@@ -862,6 +1009,7 @@ JS_RENDER = r"""
         c.setAttribute("style", (c.getAttribute("style") || "") + "max-width:100%;");
       }
     }
+    normalizeCarousel(clone);
     frag.appendChild(clone);
   }
 
@@ -901,7 +1049,12 @@ def build_render_html(page, asin: str, viewport: str, wrap_width,
             page.wait_for_timeout(800)
         wait_images_loaded(page, ids, timeout=15000 if i == 0 else 20000)
         try:
-            res = page.evaluate(JS_RENDER, {"ids": ids, "hires": int(hires or 0)})
+            res = page.evaluate(JS_RENDER, {
+                "ids": ids,
+                "hires": int(hires or 0),
+                "brandStory": bool(include_brand_story),
+                "exclude": [k.replace("_", "") for k in EXCLUDE_KEYWORDS],
+            })
         except Exception:
             res = None
         if not res or not res.get("html"):
@@ -1036,6 +1189,28 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
         html = page.content()
         data = parse_aplus(html, asin=asin, viewport=viewport,
                            include_brand_story=include_brand_story, mode=mode)
+
+        # 亚马逊偶尔会返回「没有 A+ 容器」的简化版页面（同一个链接换个时间抓就不一样，
+        # 实测 B0F4X77JZW 无 th=1 时抓到过 531KB 的无 A+ 页面）。容器不在就重载再解析。
+        if want != "product" and not data.get("has_aplus"):
+            for _try in range(2):
+                try:
+                    print(f"    [重试] 未找到 A+ 容器，重新加载页面（第 {_try + 1} 次）")
+                    page.reload(wait_until="domcontentloaded", timeout=45000)
+                    for _ in range(10):
+                        page.mouse.wheel(0, random.randint(700, 1200))
+                        page.wait_for_timeout(350)
+                    page.wait_for_timeout(1500)
+                    html2 = page.content()
+                    d2 = parse_aplus(html2, asin=asin, viewport=viewport,
+                                     include_brand_story=include_brand_story, mode=mode)
+                    if d2.get("has_aplus"):
+                        html, data = html2, d2
+                        print("    [重试] 重新加载后已拿到 A+ 内容")
+                        break
+                except Exception as e:
+                    print(f"    [warn] A+ 重试失败 -> {e}")
+                    break
         data["url"] = url
         data["fetched_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         if product_data:

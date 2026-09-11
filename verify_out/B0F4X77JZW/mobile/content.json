@@ -1,0 +1,228 @@
+{
+  "asin": "B0F4X77JZW",
+  "viewport": "mobile",
+  "has_aplus": true,
+  "note": null,
+  "is_premium_candidate": true,
+  "premium_evidence": [
+    "高级 A+ 类名：celwidget aplus-module premium-module-2-fullbackground-image"
+  ],
+  "aplus_kind": "premium",
+  "mobile_supported": true,
+  "aplus_mode": "auto",
+  "max_image_width": 600,
+  "module_count": 7,
+  "image_count": 18,
+  "video_count": 0,
+  "containers": [
+    "aplus_feature_div"
+  ],
+  "modules": [
+    {
+      "index": 0,
+      "container": "aplus_feature_div",
+      "type": "image-only",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/68bb6749-1d84-4940-ad2d-690afd40f825.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 600
+    },
+    {
+      "index": 1,
+      "container": "aplus_feature_div",
+      "type": "image-only",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/747581bf-5c51-40c9-a659-8530c5f05d79.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 600
+    },
+    {
+      "index": 2,
+      "container": "aplus_feature_div",
+      "type": "carousel",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/96fffe58-2236-4966-b259-6c27dd7d227e.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/f171383f-d55f-48db-8347-18c95b49673a.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+      ],
+      "slides": [
+        {
+          "index": 0,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/96fffe58-2236-4966-b259-6c27dd7d227e.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        },
+        {
+          "index": 1,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/f171383f-d55f-48db-8347-18c95b49673a.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        }
+      ],
+      "slide_count": 2,
+      "videos": [],
+      "image_width_hint": 600
+    },
+    {
+      "index": 4,
+      "container": "aplus_feature_div",
+      "type": "carousel",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/20d26faa-eed5-410a-847d-ac66523bf667.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bb7d0edd-1d77-43c4-bab4-34e9f4f53caf.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bb7d0edd-1d77-43c4-bab4-34e9f4f53caf.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+      ],
+      "slides": [
+        {
+          "index": 0,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/20d26faa-eed5-410a-847d-ac66523bf667.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        },
+        {
+          "index": 1,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bb7d0edd-1d77-43c4-bab4-34e9f4f53caf.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        },
+        {
+          "index": 2,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bb7d0edd-1d77-43c4-bab4-34e9f4f53caf.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        }
+      ],
+      "slide_count": 3,
+      "videos": [],
+      "image_width_hint": 600
+    },
+    {
+      "index": 6,
+      "container": "aplus_feature_div",
+      "type": "carousel",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/84178e07-49b6-4a81-b094-9e26ba085ab2.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/5c547bac-cd78-4ab1-a67a-8cd9f5d49606.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/1e3b9eec-1c1c-4c0c-b736-b9ad882a7e04.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+      ],
+      "slides": [
+        {
+          "index": 0,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/84178e07-49b6-4a81-b094-9e26ba085ab2.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        },
+        {
+          "index": 1,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/5c547bac-cd78-4ab1-a67a-8cd9f5d49606.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        },
+        {
+          "index": 2,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/1e3b9eec-1c1c-4c0c-b736-b9ad882a7e04.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        }
+      ],
+      "slide_count": 3,
+      "videos": [],
+      "image_width_hint": 600
+    },
+    {
+      "index": 8,
+      "container": "aplus_feature_div",
+      "type": "carousel",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/7c5ed509-4ab0-4bbd-821b-ca7d0f2aeb78.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0a110f7a-b1d8-4bd8-bd38-1fcb2d911ebb.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+      ],
+      "slides": [
+        {
+          "index": 0,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/7c5ed509-4ab0-4bbd-821b-ca7d0f2aeb78.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        },
+        {
+          "index": 1,
+          "images": [
+            "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0a110f7a-b1d8-4bd8-bd38-1fcb2d911ebb.__CR0,0,600,450_PT0_SX600_V1___.jpg"
+          ],
+          "text": ""
+        }
+      ],
+      "slide_count": 2,
+      "videos": [],
+      "image_width_hint": 600
+    },
+    {
+      "index": 10,
+      "container": "aplus_feature_div",
+      "type": "comparison-table",
+      "text": "Toocki 240W Nylon Braid USB C Cable Series 240W USB C Cable 20FT Add to Cart 240W USB C Cable 15FT Add to Cart 240W USB C Cable 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart Customer Reviews Customer Reviews Customer Reviews Customer Reviews Customer Reviews Customer Reviews Customer Reviews — — — 4.5 out of 5 stars 765 4.5 out of 5 stars 765 4.5 out of 5 stars 765 4.5 out of 5 stars 765 Price Price Price Price Price Price Price $23.99 $ 23 . 99 $20.99 $ 20 . 99 $15.99 $ 15 . 99 $19.99 $ 19 . 99 $19.99 $ 19 . 99 $19.99 $ 19 . 99 $19.99 $ 19 . 99 Length Length Length Length Length Length Length 20FT 15FT 10FT 10FT 10FT 10FT 10FT Color Color Color Color Color Color Color Blue Blue Blue Blue Green Red Purple Shape Shape Shape Shape Shape Shape Shape Straight Straight Straight Right Angle Right Angle Right Angle Right Angle Number of items Number of items Number of items Number of items Number of items Number of items Number of items 1 Pack 1 Pack 1 Pack 2 Pack 2 Pack 2 Pack 2 Pack Material Material Material Material Material Material Material Nylon Braid Nylon Braid Nylon Braid Nylon Braid Nylon Braid Nylon Braid Nylon Braid",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/8c703d14-5681-47e8-923c-b1fb6f88df98.__AC_SR200,225___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/ac773bd9-eccf-4548-9bac-f1d888184dde.__AC_SR200,225___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/851ff1f0-f647-4e70-9222-aa24fd19bc35.__AC_SR200,225___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/9d8e0bdd-fb5c-41b2-8bb7-19a016f4d73c.__AC_SR200,225___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/e531d9ad-41fb-49fe-8345-f38bc41c54fe.__AC_SR200,225___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/8c10ef39-a0dc-4f63-a003-0d40c83c72dc.__AC_SR200,225___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/2d885cd9-e72d-4de1-96fe-f82a216ce0cf.__AC_SR200,225___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 200
+    }
+  ],
+  "images": [
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/68bb6749-1d84-4940-ad2d-690afd40f825.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/747581bf-5c51-40c9-a659-8530c5f05d79.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/96fffe58-2236-4966-b259-6c27dd7d227e.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/f171383f-d55f-48db-8347-18c95b49673a.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/20d26faa-eed5-410a-847d-ac66523bf667.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bb7d0edd-1d77-43c4-bab4-34e9f4f53caf.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/84178e07-49b6-4a81-b094-9e26ba085ab2.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/5c547bac-cd78-4ab1-a67a-8cd9f5d49606.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/1e3b9eec-1c1c-4c0c-b736-b9ad882a7e04.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/7c5ed509-4ab0-4bbd-821b-ca7d0f2aeb78.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0a110f7a-b1d8-4bd8-bd38-1fcb2d911ebb.__CR0,0,600,450_PT0_SX600_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/8c703d14-5681-47e8-923c-b1fb6f88df98.__AC_SR200,225___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/ac773bd9-eccf-4548-9bac-f1d888184dde.__AC_SR200,225___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/851ff1f0-f647-4e70-9222-aa24fd19bc35.__AC_SR200,225___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/9d8e0bdd-fb5c-41b2-8bb7-19a016f4d73c.__AC_SR200,225___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/e531d9ad-41fb-49fe-8345-f38bc41c54fe.__AC_SR200,225___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/8c10ef39-a0dc-4f63-a003-0d40c83c72dc.__AC_SR200,225___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/2d885cd9-e72d-4de1-96fe-f82a216ce0cf.__AC_SR200,225___.jpg"
+  ],
+  "videos": [],
+  "text": "Toocki 240W Nylon Braid USB C Cable Series 240W USB C Cable 20FT Add to Cart 240W USB C Cable 15FT Add to Cart 240W USB C Cable 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart 240W 90° Design Cord 10FT Add to Cart Customer Reviews Customer Reviews Customer Reviews Customer Reviews Customer Reviews Customer Reviews Customer Reviews — — — 4.5 out of 5 stars 765 4.5 out of 5 stars 765 4.5 out of 5 stars 765 4.5 out of 5 stars 765 Price Price Price Price Price Price Price $23.99 $ 23 . 99 $20.99 $ 20 . 99 $15.99 $ 15 . 99 $19.99 $ 19 . 99 $19.99 $ 19 . 99 $19.99 $ 19 . 99 $19.99 $ 19 . 99 Length Length Length Length Length Length Length 20FT 15FT 10FT 10FT 10FT 10FT 10FT Color Color Color Color Color Color Color Blue Blue Blue Blue Green Red Purple Shape Shape Shape Shape Shape Shape Shape Straight Straight Straight Right Angle Right Angle Right Angle Right Angle Number of items Number of items Number of items Number of items Number of items Number of items Number of items 1 Pack 1 Pack 1 Pack 2 Pack 2 Pack 2 Pack 2 Pack Material Material Material Material Material Material Material Nylon Braid Nylon Braid Nylon Braid Nylon Braid Nylon Braid Nylon Braid Nylon Braid",
+  "url": "https://www.amazon.com/dp/B0F4X77JZW",
+  "fetched_at": "2026-09-11 19:55:02",
+  "render_quality": {
+    "img_total": 19,
+    "img_unloaded": 0,
+    "img_squashed": 0
+  }
+}

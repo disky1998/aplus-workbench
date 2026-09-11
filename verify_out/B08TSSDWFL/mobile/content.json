@@ -1,0 +1,145 @@
+{
+  "asin": "B08TSSDWFL",
+  "viewport": "mobile",
+  "has_aplus": true,
+  "note": null,
+  "is_premium_candidate": false,
+  "premium_evidence": [
+    "普通 A+ 类名：celwidget aplus-module 3p-module-b aplus-standard，最大图宽 1000px（未达 1400px）"
+  ],
+  "aplus_kind": "standard",
+  "mobile_supported": false,
+  "aplus_mode": "auto",
+  "max_image_width": 1000,
+  "module_count": 7,
+  "image_count": 14,
+  "video_count": 0,
+  "containers": [
+    "aplus_feature_div"
+  ],
+  "modules": [
+    {
+      "index": 0,
+      "container": "aplus_feature_div",
+      "type": "image-only",
+      "text": "",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/b7b7ae70-c29f-4392-bfdf-f9ea60e66a68.__CR0,0,970,600_PT0_SX970_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 970
+    },
+    {
+      "index": 1,
+      "container": "aplus_feature_div",
+      "type": "image-text",
+      "text": "Product Details 24 Sets Nylon Brushes Extender Dust Plug Clean Brush",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/e87be189-a263-4b83-aabe-f15fb692c9ed.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/b7300be1-28da-40aa-a424-e3da2057c568.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/2069b8fa-4ab7-4754-8b65-9890ec632092.__CR0,0,1000,1000_PT0_SX300_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 1000
+    },
+    {
+      "index": 2,
+      "container": "aplus_feature_div",
+      "type": "image-text",
+      "text": "Basic Information: 1,Material: plastic 2,Color:Green and pink available 3,Size:3.4 x 3.4 x 4 in// 8.6 x 8.6 x 10cm 4,Wight: about 180g",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/352f8c67-7da6-4cbe-897e-a9967fbbcaea.__CR0,0,1000,1000_PT0_SX300_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 1000
+    },
+    {
+      "index": 3,
+      "container": "aplus_feature_div",
+      "type": "image-text",
+      "text": "Charge information: --Charger way: USB charge --Charge time: About 3 hours --Input voltage: 5V --Input power: 3W --Battery voltage: 3.7V --Battery capacity: 1200mAh",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/21b34f11-c1a1-4dbf-81e2-a99f4773c480.__CR0,0,1000,1000_PT0_SX300_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 1000
+    },
+    {
+      "index": 4,
+      "container": "aplus_feature_div",
+      "type": "image-text",
+      "text": "Widely Used Car Office Home",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bc5fb6a8-7eb8-48fd-9620-601eb52bfbbc.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/e91dca2f-b86d-4e87-826a-eaa94e6d8142.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/3911a537-162f-4228-998e-ee43c66218fe.__CR0,0,1000,1000_PT0_SX300_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 1000
+    },
+    {
+      "index": 5,
+      "container": "aplus_feature_div",
+      "type": "image-text",
+      "text": "Package include: 1 x clean brush (random color) 1 x dust plug 1x USB cable 1 x Instruction book.",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/986e1df2-c8f9-4cb4-b640-3b61b7d52918.__CR0,0,970,600_PT0_SX970_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 970
+    },
+    {
+      "index": 6,
+      "container": "aplus_feature_div",
+      "type": "comparison-table",
+      "text": "Green Diamond Picker Pink Diamond Picker 50 Positions Floss Organizer Embroidery 30 Positions Floss Organizer Embroidery Add to Cart Add to Cart Add to Cart Add to Cart Customer Reviews 4.5 out of 5 stars 805 4.5 out of 5 stars 805 4.5 out of 5 stars 834 4.5 out of 5 stars 834 Price $14.99 $ 14 . 99 $14.99 $ 14 . 99 $11.99 $ 11 . 99 $8.99 $ 8 . 99 Color Green Pink Blue Purple Application Diamond Painting Diamond Painting Cross Stitch Cross Stitch",
+      "images": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0662a1eb-dc13-45aa-8095-d2e1c53ada4c.__CR0,0,150,300_PT0_SX150_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/a030cb9d-56ef-43ec-a7c4-58c80188371e.__CR0,0,150,300_PT0_SX150_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/78d3fb37-e5c7-4d4e-be5f-5caaac04440b.__CR0,0,150,300_PT0_SX150_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0650f322-1217-4f53-81c9-f7e5fb70f489.__CR0,0,150,300_PT0_SX150_V1___.jpg"
+      ],
+      "slides": [],
+      "slide_count": 0,
+      "videos": [],
+      "image_width_hint": 150
+    }
+  ],
+  "images": [
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/b7b7ae70-c29f-4392-bfdf-f9ea60e66a68.__CR0,0,970,600_PT0_SX970_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/e87be189-a263-4b83-aabe-f15fb692c9ed.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/b7300be1-28da-40aa-a424-e3da2057c568.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/2069b8fa-4ab7-4754-8b65-9890ec632092.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/352f8c67-7da6-4cbe-897e-a9967fbbcaea.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/21b34f11-c1a1-4dbf-81e2-a99f4773c480.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/bc5fb6a8-7eb8-48fd-9620-601eb52bfbbc.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/e91dca2f-b86d-4e87-826a-eaa94e6d8142.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/3911a537-162f-4228-998e-ee43c66218fe.__CR0,0,1000,1000_PT0_SX300_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/986e1df2-c8f9-4cb4-b640-3b61b7d52918.__CR0,0,970,600_PT0_SX970_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0662a1eb-dc13-45aa-8095-d2e1c53ada4c.__CR0,0,150,300_PT0_SX150_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/a030cb9d-56ef-43ec-a7c4-58c80188371e.__CR0,0,150,300_PT0_SX150_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/78d3fb37-e5c7-4d4e-be5f-5caaac04440b.__CR0,0,150,300_PT0_SX150_V1___.jpg",
+    "https://m.media-amazon.com/images/S/aplus-media-library-service-media/0650f322-1217-4f53-81c9-f7e5fb70f489.__CR0,0,150,300_PT0_SX150_V1___.jpg"
+  ],
+  "videos": [],
+  "text": "Product Details 24 Sets Nylon Brushes Extender Dust Plug Clean Brush Basic Information: 1,Material: plastic 2,Color:Green and pink available 3,Size:3.4 x 3.4 x 4 in// 8.6 x 8.6 x 10cm 4,Wight: about 180g Charge information: --Charger way: USB charge --Charge time: About 3 hours --Input voltage: 5V --Input power: 3W --Battery voltage: 3.7V --Battery capacity: 1200mAh Widely Used Car Office Home Package include: 1 x clean brush (random color) 1 x dust plug 1x USB cable 1 x Instruction book. Green Diamond Picker Pink Diamond Picker 50 Positions Floss Organizer Embroidery 30 Positions Floss Organizer Embroidery Add to Cart Add to Cart Add to Cart Add to Cart Customer Reviews 4.5 out of 5 stars 805 4.5 out of 5 stars 805 4.5 out of 5 stars 834 4.5 out of 5 stars 834 Price $14.99 $ 14 . 99 $14.99 $ 14 . 99 $11.99 $ 11 . 99 $8.99 $ 8 . 99 Color Green Pink Blue Purple Application Diamond Painting Diamond Painting Cross Stitch Cross Stitch",
+  "url": "https://www.amazon.com/dp/B08TSSDWFL",
+  "fetched_at": "2026-09-11 19:54:14",
+  "render_quality": {
+    "img_total": 14,
+    "img_unloaded": 0,
+    "img_squashed": 0
+  }
+}
