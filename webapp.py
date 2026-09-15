@@ -343,16 +343,19 @@ def _run_task_serial(task, want, mode):
                 ctx_root = None
                 browser = None
                 if o.get("userDataDir"):
-                    ctx_root = p.chromium.launch_persistent_context(
-                        o["userDataDir"],
-                        user_agent=random.choice(sa.UA_DESKTOP_POOL),
-                        viewport={"width": 1440, "height": 2400},
-                        **launch_kwargs)
+                    ctx_root, _compat = sa.launch_persistent_with_fallback(
+                        p, o["userDataDir"],
+                        dict(user_agent=random.choice(sa.UA_DESKTOP_POOL),
+                             viewport={"width": 1440, "height": 2400}, **launch_kwargs))
+                    if _compat:
+                        print("[兼容] 已启用 --no-sandbox（本机沙箱无法初始化）")
 
                     def factory(vp):
                         return ctx_root
                 else:
-                    browser = p.chromium.launch(**launch_kwargs)
+                    browser, _compat = sa.launch_browser_with_fallback(p, launch_kwargs)
+                    if _compat:
+                        print("[兼容] 已启用 --no-sandbox（本机沙箱无法初始化）")
 
                     def factory(vp):
                         kw = {}

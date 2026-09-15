@@ -33,6 +33,19 @@ from pathlib import Path
 
 DEFAULT_SIZE = 6
 
+# 沙箱兼容参数：部分机器（安全软件 / AppLocker / WDAC 拦截「用户可写目录」下的进程）
+# 下 Chrome 的沙箱无法初始化，表现为浏览器进程启动即死、调试端口永远不监听
+# （profile 目录里只剩半成品 .tmp，Crashpad 记录 variations_crash_streak 暴涨）。
+# 实测：Program Files 里的 Chrome 带沙箱正常，用户目录下的 Playwright Chromium /
+# Chrome for Testing 全部失败；加上这些参数后立即可用。
+# 代价是失去渲染进程的沙箱隔离 —— 采集公开商品页场景可接受。
+SANDBOX_FALLBACK_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+]
+
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -72,6 +85,7 @@ class BrowserPool:
         self.error = ""
         self.ready_at = 0.0
         self.site = "ae"
+        self.compat = False          # 是否因沙箱无法初始化而启用了 --no-sandbox
 
     # ------------------------------------------------------------- 工具
     @property
@@ -108,6 +122,7 @@ class BrowserPool:
                 "alive": self._alive(),
                 "steps": self.steps[-14:],
                 "profile": str(self.profile_dir),
+                "compat": bool(self.compat),
             }
 
     # ------------------------------------------------------------- 预热
@@ -119,6 +134,7 @@ class BrowserPool:
             self.state = "starting"
             self.steps = []
             self.error = ""
+            self.compat = False
             self.size = max(1, min(int(size or DEFAULT_SIZE), 12))
             self.site = site or "ae"
             self.message = "准备中…"
@@ -172,7 +188,7 @@ class BrowserPool:
             time.sleep(1.5)                      # 等文件锁释放
         self.step("配置目录已就绪")
 
-    def _launch(self, exe: str):
+    def _launch(self, exe: str, compat: bool = False):
         port = _free_port()
         home = f"https://www.amazon.{self.site}/"
         args = [
@@ -185,12 +201,15 @@ class BrowserPool:
             "--disable-features=Translate,OptimizationHints,MediaRouter",
             "--window-size=1280,900",
             "--window-position=60,40",
-            home,
         ]
+        if compat:
+            args += SANDBOX_FALLBACK_ARGS
+        args.append(home)
         for a in self.stealth_args:
             if a not in args:
                 args.append(a)
-        self.step(f"启动有头浏览器（调试端口 {port}）")
+        self.step(f"启动有头浏览器（调试端口 {port}）"
+                  + ("［兼容模式 --no-sandbox］" if compat else ""))
         self.proc = subprocess.Popen(args, **spawn_kwargs())
         self.port = port
         self.step("等待浏览器就绪")
@@ -223,10 +242,21 @@ class BrowserPool:
             exe = self._resolve_chromium()
             self.profile_dir.mkdir(parents=True, exist_ok=True)
 
+            # 首次初始化 profile（失败也无妨，正式启动阶段会兜底）
             if not (self.profile_dir / "Default").exists():
                 self._init_profile(exe)
 
-            self._launch(exe)
+            # 正式启动：常规失败（沙箱无法初始化 → 启动即死/端口不监听）
+            # → 自动带 --no-sandbox 重试一次
+            try:
+                self._launch(exe)
+            except RuntimeError as e:
+                self.step(f"常规启动失败（{e}），改用兼容模式（--no-sandbox）重试", False)
+                self._kill()
+                time.sleep(1.0)
+                self._launch(exe, compat=True)
+                with self._lock:
+                    self.compat = True
 
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:

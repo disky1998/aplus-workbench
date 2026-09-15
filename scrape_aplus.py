@@ -219,6 +219,63 @@ STEALTH_ARGS = [
     "--no-first-run",
     "--no-default-browser-check",
 ]
+
+# 沙箱兼容参数（与 pool.py 中同名常量保持一致）
+# 部分机器（安全软件 / AppLocker / WDAC 拦截「用户可写目录」下的进程）上 Chrome 沙箱
+# 无法初始化：浏览器进程启动即死、调试端口不监听。加这些参数可绕过，
+# 代价是失去渲染进程沙箱隔离（采集公开商品页可接受）。
+SANDBOX_FALLBACK_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+]
+
+
+def launch_browser_with_fallback(p, launch_kwargs: dict, log=print):
+    """启动浏览器；若因沙箱无法初始化而失败，自动带 --no-sandbox 重试。
+
+    返回 (browser 或 None, 是否用了兼容模式)。持久上下文场景返回 None 表示
+    「本次不适用」，调用方自行处理。
+    """
+    def _healthy(b) -> bool:
+        ctx = b.new_context()
+        try:
+            pg = ctx.new_page()
+            pg.goto("about:blank", timeout=20000)
+            return True
+        finally:
+            ctx.close()
+
+    try:
+        b = p.chromium.launch(**launch_kwargs)
+        if _healthy(b):
+            return b, False
+        try:
+            b.close()
+        except Exception:
+            pass
+        log("[兼容] 浏览器启动后无响应，改用 --no-sandbox 重试")
+    except Exception as e:
+        log(f"[兼容] 常规启动失败（{type(e).__name__}: {str(e)[:90]}），"
+            f"改用 --no-sandbox 重试")
+
+    kw = dict(launch_kwargs)
+    kw["args"] = list(kw.get("args", [])) + SANDBOX_FALLBACK_ARGS
+    b = p.chromium.launch(**kw)
+    return b, True
+
+
+def launch_persistent_with_fallback(p, user_data_dir: str, launch_kwargs: dict, log=print):
+    """持久上下文版：同样支持 --no-sandbox 降级。返回 (ctx, 是否兼容模式)"""
+    try:
+        return p.chromium.launch_persistent_context(user_data_dir, **launch_kwargs), False
+    except Exception as e:
+        log(f"[兼容] 持久上下文启动失败（{type(e).__name__}: {str(e)[:90]}），"
+            f"改用 --no-sandbox 重试")
+    kw = dict(launch_kwargs)
+    kw["args"] = list(kw.get("args", [])) + SANDBOX_FALLBACK_ARGS
+    return p.chromium.launch_persistent_context(user_data_dir, **kw), True
 UA_MOBILE = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
     "Version/17.5 Mobile/15E148 Safari/604.1"
@@ -1571,17 +1628,19 @@ def main():
         if args.proxy:
             launch_kwargs["proxy"] = {"server": args.proxy}
         if args.user_data_dir:
-            ctx_root = p.chromium.launch_persistent_context(
-                args.user_data_dir,
-                user_agent=random.choice(UA_DESKTOP_POOL),
-                viewport={"width": 1440, "height": 2400},
-                **launch_kwargs,
-            )
+            ctx_root, _compat = launch_persistent_with_fallback(
+                p, args.user_data_dir,
+                dict(user_agent=random.choice(UA_DESKTOP_POOL),
+                     viewport={"width": 1440, "height": 2400}, **launch_kwargs))
+            if _compat:
+                print("[兼容] 已启用 --no-sandbox（本机沙箱无法初始化）")
 
             def factory(vp):
                 return ctx_root  # 持久上下文不可关闭，外层统一处理
         else:
-            browser = p.chromium.launch(**launch_kwargs)
+            browser, _compat = launch_browser_with_fallback(p, launch_kwargs)
+            if _compat:
+                print("[兼容] 已启用 --no-sandbox（本机沙箱无法初始化）")
 
             def factory(vp):
                 if vp == "mobile":
