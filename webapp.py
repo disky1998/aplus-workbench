@@ -331,6 +331,8 @@ def _run_task_serial(task, want, mode):
             print(f"[启动] 共 {len(items)} 个 SKU · 站点 {task.domain}")
             print(f"[模式] 单线程串行（建议先点「预热浏览器」再抓，更快也不容易被拦）")
             print(f"[登录态] {'复用上次的 cookies（验证码概率更低）' if use_state else '首次运行，结束后自动记住'}")
+            _lcn, _lcv = sa.lang_cookie(task.domain)
+            print(f"[语言] 已锁定英文（{_lcn}={_lcv}），页面若返回阿语会自动切回")
 
             launch_kwargs = {
                 "headless": not o.get("headed", False),
@@ -365,11 +367,13 @@ def _run_task_serial(task, want, mode):
                             kw.update(user_agent=sa.UA_MOBILE,
                                       viewport={"width": 390, "height": 844},
                                       device_scale_factor=3,
-                                      is_mobile=True, has_touch=True, locale="en-US")
+                                      is_mobile=True, has_touch=True, locale="en-US",
+                                      extra_http_headers=sa.LANG_HEADERS)
                         else:
                             kw.update(user_agent=random.choice(sa.UA_DESKTOP_POOL),
                                       viewport={"width": 1440, "height": 2400},
-                                      locale="en-US")
+                                      locale="en-US",
+                                      extra_http_headers=sa.LANG_HEADERS)
                         return browser.new_context(**kw)
 
                 try:
@@ -472,6 +476,8 @@ def _run_task_pool(task, want, mode, workers):
         with contextlib.redirect_stdout(lw), contextlib.redirect_stderr(lw):
             print(f"[启动] 共 {len(items)} 个 SKU · 站点 {task.domain}")
             print(f"[模式] {workers} 路并行（复用预热好的标签页，共享同一份登录态）")
+            _lcn, _lcv = sa.lang_cookie(task.domain)
+            print(f"[语言] 已锁定英文（{_lcn}={_lcv}），页面若返回阿语会自动切回")
             threads = [threading.Thread(target=worker, args=(i,), daemon=True)
                        for i in range(workers)]
             for t in threads:

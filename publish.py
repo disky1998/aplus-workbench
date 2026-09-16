@@ -83,14 +83,6 @@ def _push(branch: str):
     return p
 
 
-def _push(branch: str):
-    """走 origin 推送（凭据由 gh 配置的 credential helper 提供）
-
-    注意：不要用 `-c https.proxy=` 或把 token 嵌进 URL —— 实测都会让 git 直接退出 128。
-    """
-    run(["git", "push", "-u", "origin", f"{branch}:{branch}"])
-
-
 def main():
     if not EXE.exists():
         raise SystemExit(f"找不到 {EXE}\n先运行 build_exe.bat")

@@ -282,6 +282,76 @@ UA_MOBILE = (
 )
 
 
+# ---------------------------------------------------------------- 语言锁定（英文）
+# 亚马逊按「访客语言偏好」返回不同语言版本的商品标题 / 卖点 / A+ 文案。中东站
+# （ae / sa）尤其明显，会整段返回阿拉伯语。
+#
+# 语言偏好是靠 cookie 记住的（下表的名字和值都是从亚马逊服务器实际下发的 cookie 里
+# 读出来的，不是猜的），而池化模式用的是**持久化 profile** —— 一旦偏好被写成阿语
+# （ar_AE）就会一直跟下去，表现为「有时候抓到的全是阿语」。所以每次抓取前都改写回英文。
+#
+#   amazon.com  → lc-main    = en_US
+#   amazon.ae   → lc-acbae   = en_AE   （中东站英文值是 en_AE，不是 en_US）
+#   amazon.sa   → lc-acbsa   = en_AE
+#   amazon.de   → lc-acbde   = en_GB
+LANG_COOKIES = {
+    "com": ("lc-main", "en_US"),
+    # 中东
+    "ae": ("lc-acbae", "en_AE"), "sa": ("lc-acbsa", "en_AE"),
+    "eg": ("lc-acbeg", "en_AE"),
+    # 欧洲
+    "co.uk": ("lc-acbuk", "en_GB"), "de": ("lc-acbde", "en_GB"),
+    "fr": ("lc-acbfr", "en_GB"), "it": ("lc-acbit", "en_GB"),
+    "es": ("lc-acbes", "en_GB"), "nl": ("lc-acbnl", "en_GB"),
+    "se": ("lc-acbse", "en_GB"), "pl": ("lc-acbpl", "en_GB"),
+    "com.tr": ("lc-acbtr", "en_GB"),
+    # 亚太 / 美洲
+    "co.jp": ("lc-acbjp", "en_US"), "in": ("lc-acbin", "en_US"),
+    "sg": ("lc-acbsg", "en_US"), "ca": ("lc-acbca", "en_US"),
+    "com.au": ("lc-acbau", "en_US"), "com.mx": ("lc-acbmx", "en_US"),
+    "com.br": ("lc-acbbr", "en_US"),
+}
+LANG_HEADERS = {"Accept-Language": "en-US,en;q=0.9"}
+
+
+def lang_cookie(domain: str):
+    """该站点的英文语言偏好 cookie → (name, value)。未收录的站点按后缀回退。"""
+    d = (domain or "com").strip().lower().lstrip(".")
+    if d in LANG_COOKIES:
+        return LANG_COOKIES[d]
+    cc = re.sub(r"[^a-z]", "", d) or "us"
+    return f"lc-acb{cc[-3:]}", "en_US"
+
+
+def en_url(url: str) -> str:
+    """给商品页 URL 追加 language=en_US（亚马逊页面上的语言切换用的就是这个参数）"""
+    if "language=" in url:
+        return url
+    return url + ("&" if "?" in url else "?") + "language=en_US"
+
+
+def force_english(ctx, domain: str, log=None) -> bool:
+    """把语言偏好改写成英文：语言 cookie + Accept-Language 请求头。
+
+    必须在**导航之前**调用（cookie 只对后续请求生效）。
+    返回是否成功设上 cookie；失败不阻断抓取，只是语言可能不受控。
+    """
+    name, val = lang_cookie(domain)
+    ok = False
+    try:
+        ctx.add_cookies([{"name": name, "value": val,
+                          "domain": f".amazon.{domain}", "path": "/"}])
+        ok = True
+    except Exception as e:
+        if log:
+            log(f"[语言] cookie 设置失败（{str(e)[:70]}）")
+    try:
+        ctx.set_extra_http_headers(LANG_HEADERS)
+    except Exception:
+        pass          # CDP 接管的持久上下文可能不支持，cookie 那条已经够用
+    return ok
+
+
 # ---------------------------------------------------------------- 解析逻辑
 
 def clean_text(s: str) -> str:
@@ -1170,7 +1240,7 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
       都为空    —— 走 browser_ctx_factory（非池化模式）
     """
     key = folder or asin
-    url = f"https://www.amazon.{domain}/dp/{asin}"
+    url = en_url(f"https://www.amazon.{domain}/dp/{asin}")
     own = page is None          # 页面/上下文是否由本函数创建并负责关闭
     ctx = None
     try:
@@ -1194,12 +1264,15 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
                 ctx.add_init_script(STEALTH_JS)
             except Exception:
                 pass
+            # 语言锁死英文：必须在导航前设置，cookie 只对之后的请求生效
+            force_english(ctx, domain)
             page = prepare_page(ctx, url, scroll=scroll,
                                 include_brand_story=include_brand_story,
                                 wait_aplus=(want != "product"))
         else:
             # 复用预热标签页：只导航，不创建也不关闭
             ctx = page.context
+            force_english(ctx, domain)
             navigate(page, url, scroll=scroll,
                      include_brand_story=include_brand_story,
                      wait_aplus=(want != "product"))
@@ -1651,11 +1724,13 @@ def main():
                         is_mobile=True,
                         has_touch=True,
                         locale="en-US",
+                        extra_http_headers=LANG_HEADERS,
                     )
                 return browser.new_context(
                     user_agent=random.choice(UA_DESKTOP_POOL),
                     viewport={"width": 1440, "height": 2400},
                     locale="en-US",
+                    extra_http_headers=LANG_HEADERS,
                 )
 
         for idx, asin in enumerate(asins):

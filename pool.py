@@ -199,6 +199,8 @@ class BrowserPool:
             "--no-first-run", "--no-default-browser-check",
             "--disable-blink-features=AutomationControlled",
             "--disable-features=Translate,OptimizationHints,MediaRouter",
+            "--lang=en-US",              # 浏览器 UI 与 JS 语言
+            "--accept-lang=en-US,en",    # 影响请求头里的 Accept-Language
             "--window-size=1280,900",
             "--window-position=60,40",
         ]
@@ -267,6 +269,16 @@ class BrowserPool:
                         ctx.add_init_script(self.stealth_js)
                     except Exception:
                         pass
+                # 语言锁死英文：持久 profile 会把语言偏好一直记着，一旦被写成阿语
+                # （ar_AE）之后每次抓取都是阿语 —— 所以每次预热都重置回英文。
+                try:
+                    from scrape_aplus import lang_cookie
+                    cname, cval = lang_cookie(self.site)
+                    ctx.add_cookies([{"name": cname, "value": cval,
+                                      "domain": f".amazon.{self.site}", "path": "/"}])
+                    self.step(f"语言已锁定英文（{cname}={cval}）")
+                except Exception as e:
+                    self.step(f"语言锁定失败（{str(e)[:60]}），不影响抓取", False)
                 pages = list(ctx.pages)
                 if not pages:
                     pages = [ctx.new_page()]
