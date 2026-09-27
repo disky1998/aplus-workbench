@@ -180,33 +180,52 @@ PRODUCT_JS = r"""() => {
       return s.slice(0, i) + '/images/I/' + id + (em ? '.' + em[1].toLowerCase() : '.jpg');
     }
     const imgs = [];
-    document.querySelectorAll('#landingImage, #imgBlkFront, #main-image, [data-action="main-image-click"] img')
-      .forEach(im => {
-        if (im.dataset && im.dataset.aDynamicImage) {
-          try { Object.keys(JSON.parse(im.dataset.aDynamicImage)).forEach(k => push(k, imgs)); } catch (e) {}
-        }
-        push((im.dataset && im.dataset.oldHires) || im.src, imgs);
-      });
-    document.querySelectorAll('#altImages ul li img, #imageBlockThumbs img, #imageBlock .imageThumbnail img, .imageThumb img')
-      .forEach(im => push((im.dataset && im.dataset.oldHires) || im.src, imgs));
-    const ogi = document.querySelector('meta[property="og:image"]');
-    if (ogi) push(ogi.getAttribute('content'), imgs);
 
-    // 兜底：从页面源码里挖 colorImages / imageGalleryData
-    if (imgs.length < 3) {
+    /* 首选：页面内嵌的 colorImages.initial —— 每一项都带 hiRes（原生大图 key）。
+       #altImages 里的缩略图给的是 _US40_ 小图 key：同一张图在大图区和缩略图区用的是
+       不同 key，后果有两个 —— 副图最大只能到 500px；主图还会被重复算进来一次
+       （实测：缩略图 key 41OQcP3TabL 与主图 61sGPouEo7L 是同一张图，像素差仅 2.8）。
+       而 hiRes 的 key 取裸 ID 是 1600×1600。 */
+    const gallery = (() => {
       const html = document.documentElement ? document.documentElement.outerHTML : '';
       const pats = [
-        new RegExp("'colorImages':\\s*\\x7B\\s*'initial':\\s*(\\[[\\s\\S]*?\\])\\s*\\x7D"),
-        new RegExp('"colorImages":\\s*\\x7B\\s*"initial":\\s*(\\[[\\s\\S]*?\\])\\s*\\x7D'),
-        new RegExp("'imageGalleryData':\\s*(\\[[\\s\\S]*?\\])")
+        /['"]colorImages['"]\s*:\s*\{\s*['"]initial['"]\s*:\s*A\.\$\.parseJSON\(\s*'([\s\S]*?)'\s*\)/,
+        /['"]colorImages['"]\s*:\s*\{\s*['"]initial['"]\s*:\s*A\.\$\.parseJSON\(\s*"([\s\S]*?)"\s*\)/,
+        /['"]colorImages['"]\s*:\s*\{\s*['"]initial['"]\s*:\s*(\[[\s\S]*?\])\s*\}/,
+        /['"]imageGalleryData['"]\s*:\s*(\[[\s\S]*?\])/
       ];
       for (const re of pats) {
         const m = html.match(re);
         if (!m) continue;
+        const t = String(m[1]).replace(/\\"/g, '"').replace(/\\'/g, "'");
         try {
-          JSON.parse(m[1]).forEach(d => push(d.hiRes || d.large || d.mainUrl || d.main || d.thumbUrl, imgs));
+          const arr = JSON.parse(t);
+          if (Array.isArray(arr) && arr.length) return arr;
         } catch (e) {}
       }
+      return null;
+    })();
+
+    if (gallery && gallery.length) {
+      gallery.forEach(d => {
+        if (typeof d === 'string') { push(d, imgs); return; }
+        push(d.hiRes || d.large || d.mainUrl || d.thumbUrl || d.thumb, imgs);
+      });
+    }
+
+    // 兜底：页面里没有图集数据时，退回主图区 + 缩略图 + og:image
+    if (imgs.length < 2) {
+      document.querySelectorAll('#landingImage, #imgBlkFront, #main-image, [data-action="main-image-click"] img')
+        .forEach(im => {
+          if (im.dataset && im.dataset.aDynamicImage) {
+            try { Object.keys(JSON.parse(im.dataset.aDynamicImage)).forEach(k => push(k, imgs)); } catch (e) {}
+          }
+          push((im.dataset && im.dataset.oldHires) || im.src, imgs);
+        });
+      document.querySelectorAll('#altImages ul li img, #imageBlockThumbs img, #imageBlock .imageThumbnail img, .imageThumb img')
+        .forEach(im => push((im.dataset && im.dataset.oldHires) || im.src, imgs));
+      const ogi = document.querySelector('meta[property="og:image"]');
+      if (ogi) push(ogi.getAttribute('content'), imgs);
     }
     out.images = imgs;
 

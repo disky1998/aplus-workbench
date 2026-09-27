@@ -1130,9 +1130,23 @@ JS_RENDER = r"""
         if (src.indexOf("//") === 0) src = "https:" + src;
         if (src) c.setAttribute("src", src);
         c.removeAttribute("srcset");
+        c.removeAttribute("data-srcset");
         c.removeAttribute("data-a-dynamic-image");
         c.removeAttribute("data-old-hires");
         c.removeAttribute("onload");
+        // ⚠️ data-src 是懒加载残留：src 提升了它却不动，导出 HTML 里同一张图就会
+        //    同时存在「高清 src + 小图 data-src」两个链接 —— 对外表现就是
+        //    「第一张高清、其余都是小图」+「第二张跟第一张一模一样」。
+        if (src) c.setAttribute("data-src", src); else c.removeAttribute("data-src");
+        // A+ 里大量模块用 background-image 承载图片，同样要提升，否则残留小图
+        const st0 = c.getAttribute("style") || "";
+        if (cfg.hires && st0.indexOf("url(") > -1) {
+          c.setAttribute("style", st0.replace(/url\((['"]?)([^'")]+)\1\)/g, (m0, q, u) => {
+            let v = u;
+            if (v.indexOf("//") === 0) v = "https:" + v;
+            return 'url("' + v.replace(/_SX\d+_/, "_SX" + cfg.hires + "_") + '")';
+          }));
+        }
         c.setAttribute("style", (c.getAttribute("style") || "") + "max-width:100%;");
       }
     }
