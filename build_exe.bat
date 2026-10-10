@@ -3,12 +3,19 @@ chcp 65001 >nul
 title Build APlusWorkbench
 cd /d "%~dp0"
 
-set "PY=C:\Users\qq117\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+set "PY=C:\Users\qq117\AppData\Local\Programs\Python\Python311\python.exe"
+if not exist "%PY%" set "PY=C:\Users\qq117\.workbuddy\binaries\python\versions\3.13.12\python.exe"
 if not exist "%PY%" set "PY=python"
 
 echo.
+echo  [0/6] 使用解释器：%PY%
+"%PY%" -c "import playwright, bs4, fastapi, openpyxl, PIL, pystray" 2>nul
+if errorlevel 1 (
+  echo        [提示] 该解释器缺少依赖，下面会自动补装
+)
+
 echo  [1/6] 安装打包依赖 ...
-"%PY%" -m pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller pystray pillow openpyxl
+"%PY%" -m pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller pystray pillow openpyxl playwright beautifulsoup4 lxml requests fastapi uvicorn
 if errorlevel 1 goto fail
 
 echo  [2/6] 生成图标 ...

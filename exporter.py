@@ -23,7 +23,8 @@ BASE_COLS = [
     ("title", "标题"), ("highlights", "商品亮点(小标题)"), ("category", "类目路径"),
     ("nodeId", "最小类目节点ID"), ("brand", "品牌"), ("price", "价格"),
     ("rating", "评分"), ("reviews", "评论数"), ("seller", "卖家"),
-    ("bulletsSource", "五点来源"),
+    ("bulletsSource", "五点来源"), ("videoCount", "视频数"),
+    ("videoUrls", "商品视频链接"),
 ]
 
 
@@ -51,6 +52,7 @@ def collect(out_root: Path, items=None) -> list[dict]:
         d = _load(p)
         if not d:
             continue
+        vids = d.get("videos") or []
         row = {
             "sku": sku,
             "asin": d.get("asin", ""),
@@ -66,6 +68,8 @@ def collect(out_root: Path, items=None) -> list[dict]:
             "reviews": d.get("reviews", ""),
             "seller": d.get("seller", ""),
             "bulletsSource": d.get("bulletsSource", ""),
+            "videoCount": len(vids),
+            "videoUrls": "\n".join(str(v.get("url") or "") for v in vids if isinstance(v, dict)),
             "bullets": d.get("bullets") or [],
             "images": d.get("images") or [],
         }

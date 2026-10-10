@@ -10,7 +10,7 @@ import re
 PRODUCT_JS = r"""() => {
   try {
     const out = {
-      title:'', highlights:'', category:'', nodeId:'', bullets:[], images:[],
+      title:'', highlights:'', category:'', nodeId:'', bullets:[], images:[], videos:[],
       brand:'', price:'', rating:'', reviews:'', seller:'', availability:'',
       blocked:false, notfound:false, error:''
     };
@@ -229,6 +229,69 @@ PRODUCT_JS = r"""() => {
     }
     out.images = imgs;
 
+    /* ---- 商品视频（VSE）----
+       亚马逊商品视频不是 mp4 直链，而是内嵌在页面配置里的 HLS 清单：
+         "videos":[{"url":".../default.jobtemplate.hls.m3u8","title":...,"durationSeconds":42,
+                    "videoWidth":"1920","videoHeight":"1080","isHeroVideo":false, ...}],
+         "videosData":null,"totalVideoCount":1
+       用 "videos":[...],"videosData" 作边界来抠，比逐层找 DOM 稳。
+       注意：页面里另有「相关视频」(#va-related-videos-widget) 属于别的商品，不取。 */
+    const seenV = {};
+    const pushV = (u, extra) => {
+      if (!u || typeof u !== 'string') return;
+      let s = u.trim().replace(/&amp;/g, '&');
+      if (s.indexOf('//') === 0) s = 'https:' + s;
+      if (s.indexOf('http') !== 0) return;
+      if (seenV[s]) return;
+      seenV[s] = 1;
+      out.videos.push(Object.assign({
+        url: s, title: '', duration: 0, width: '', height: '',
+        hero: false, group: '', thumb: '', id: ''
+      }, extra || {}));
+    };
+
+    (() => {
+      const html = document.documentElement ? document.documentElement.outerHTML : '';
+      let arr = null;
+      const m = html.match(/"videos"\s*:\s*(\[[\s\S]*?\])\s*,\s*"videosData"/);
+      if (m) {
+        try { const t = JSON.parse(m[1]); if (Array.isArray(t)) arr = t; } catch (e) {}
+      }
+      if (arr && arr.length) {
+        arr.forEach(v => {
+          if (!v || typeof v !== 'object') return;
+          pushV(v.url || v.videoUrl || v.hlsUrl, {
+            title: v.title || '',
+            duration: parseInt(v.durationSeconds || 0, 10) || 0,
+            width: String(v.videoWidth || ''), height: String(v.videoHeight || ''),
+            hero: !!(v.isHeroVideo || v.isHero),
+            group: v.groupType || '',
+            thumb: v.slateUrl || v.thumb || v.thumbUrl || '',
+            id: v.acicContentId || v.mediaObjectId || ''
+          });
+        });
+      }
+      // 兜底 1：缩略图条上的 videoThumbnail（data-video-url）
+      if (!out.videos.length) {
+        document.querySelectorAll('#altImages li.videoThumbnail, #imageBlock li.videoThumbnail')
+          .forEach(li => {
+            const img = li.querySelector('img');
+            pushV(li.getAttribute('data-video-url') ||
+                  (img && (img.getAttribute('data-video-url') || img.getAttribute('data-src'))));
+          });
+      }
+      // 兜底 2：整页扫 videoUrl / hlsUrl（相关视频单独排除）
+      if (!out.videos.length) {
+        const rel = document.querySelector('#va-related-videos-widget');
+        const relHtml = rel ? rel.outerHTML : '';
+        const hits = html.match(/"(?:videoUrl|hlsUrl|dashUrl)"\s*:\s*"([^"]+)"/g) || [];
+        hits.forEach(h => {
+          const mm = h.match(/"([^"]+)"\s*$/);
+          if (mm && relHtml.indexOf(mm[1]) === -1) pushV(mm[1]);
+        });
+      }
+    })();
+
     /* ---- 附加信息 ---- */
     out.brand = one(['#bylineInfo', 'tr.po-brand td.a-span9', '#brand', 'a#bylineInfo'])
       .replace(/^(Brand|Visit the)\s*[:：]\s*/i, '').replace(/\s+Store$/i, '').trim();
@@ -264,8 +327,8 @@ PRODUCT_JS = r"""() => {
 
 def empty_product() -> dict:
     return {"title": "", "highlights": "", "bulletsSource": "", "category": "", "nodeId": "",
-            "bullets": [], "images": [], "brand": "", "price": "", "rating": "",
-            "reviews": "", "seller": "", "availability": ""}
+            "bullets": [], "images": [], "videos": [], "brand": "", "price": "",
+            "rating": "", "reviews": "", "seller": "", "availability": ""}
 
 
 def extract_product(page) -> dict:
@@ -285,6 +348,8 @@ def extract_product(page) -> dict:
     data["title"] = re.sub(r"\s+", " ", str(data.get("title") or "")).strip()
     data["bullets"] = [b for b in (data.get("bullets") or []) if str(b).strip()][:5]
     data["images"] = [u for u in (data.get("images") or []) if u]
+    data["videos"] = [v for v in (data.get("videos") or [])
+                      if isinstance(v, dict) and str(v.get("url") or "").strip()]
     return data
 
 
@@ -307,4 +372,5 @@ EXPORT_COLUMNS = [
     ("nodeId", "最小类目节点ID"), ("brand", "品牌"), ("price", "价格"),
     ("rating", "评分"), ("reviews", "评论数"), ("seller", "卖家"),
     ("bulletsSource", "五点来源"),
+    ("videoCount", "视频数"), ("videoUrls", "商品视频链接"),
 ]

@@ -642,6 +642,21 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
             </div>
           </div>
 
+          <div class="field" id="prodArtField">
+            <label class="f">商品产物<span class="q" title="商品主图 / 商品视频，存到该 SKU 自己的目录里（与 A+ 图片分开）">?</span></label>
+            <div class="toggles">
+              <label class="sw" title="把商品主图下载到 &lt;SKU&gt;/images/（原生 1600px 大图）">
+                <input type="checkbox" id="dlProdImg" checked><span class="track"></span><span class="txt">下载主图</span></label>
+              <label class="sw" title="抓完打包成 product_images.zip（按 SKU 分文件夹 + manifest.csv），会自动勾选「下载主图」">
+                <input type="checkbox" id="pkgProdImg" checked><span class="track"></span><span class="txt">主图 ZIP</span></label>
+              <label class="sw" title="下载商品视频并合并成一个 mp4，存到 &lt;SKU&gt;/video/&lt;SKU&gt;.mp4（优先 1080p）">
+                <input type="checkbox" id="dlVideo"><span class="track"></span><span class="txt">视频 → MP4</span></label>
+              <label class="sw" title="抓完打包成 product_videos.zip，会自动勾选「视频 → MP4」">
+                <input type="checkbox" id="pkgVideo"><span class="track"></span><span class="txt">视频 ZIP</span></label>
+            </div>
+            <div id="ffmpegTip" style="font-size:11.5px;color:var(--dim);margin-top:7px"></div>
+          </div>
+
           <div class="fold" id="foldAdv">
             <button class="fold-hd" type="button" id="btnFoldAdv">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -855,6 +870,8 @@ function setWant(v){
     if(!el) return;
     el.classList.toggle('hidden', off);
   });
+  // 只抓 A+ 时，商品主图/视频设置也没有意义
+  if($('prodArtField')) $('prodArtField').classList.toggle('hidden', v === 'aplus');
 }
 function layoutSegs(){
   setMode($('aplusMode').value || 'auto');
@@ -899,6 +916,17 @@ async function loadEnv(){
     }
     $('envNote').textContent = pw.ok ? '抓取使用 Playwright 内核，无需 chromedriver'
                                      : '抓取依赖 Playwright 内核，请先安装';
+
+    // ffmpeg（商品视频转 mp4 用）
+    const ff = d.ffmpeg || {};
+    if($('ffmpegTip')){
+      $('ffmpegTip').innerHTML = ff.ok
+        ? `<span class="badge ok">ffmpeg 已就绪</span> 商品视频会自动合成 MP4`
+        : `<span class="badge warn">未检测到 ffmpeg</span> 商品视频将保存为 .ts ——
+           <a href="#" id="btnFfmpeg"><b>点这里一键安装</b></a>`;
+      const bf = $('btnFfmpeg');
+      if(bf) bf.onclick = (e)=>{ e.preventDefault(); installFfmpeg(); };
+    }
 
     // 首次使用引导：还没有登录态时，提示先跑一次有头模式
     if(d.has_state === false && !localStorage.getItem('aplus_first_hint')){
@@ -949,6 +977,18 @@ $('btnPw').onclick = async ()=>{
   startPoll(()=>{ btn.disabled = false; btn.textContent = '安装 / 更新内核'; loadEnv(); });
 };
 $('btnOpenOut').onclick = ()=> fetch('/api/open');
+
+/* 商品视频转 MP4 需要 ffmpeg：一键装（winget），进度看日志 */
+async function installFfmpeg(){
+  const yes = confirm('将通过 winget 安装 ffmpeg（Gyan.FFmpeg.Essentials），约 100 MB。\n继续？');
+  if(!yes) return;
+  const d = await (await fetch('/api/env/install-ffmpeg',{method:'POST'})).json();
+  curTask = d.task_id; logIdx = 0;
+  $('log').className = 'logbox idle'; $('log').innerHTML = '';
+  $('logCard').classList.remove('collapsed');
+  toast('开始安装 ffmpeg，进度见日志', 'info');
+  startPoll(loadEnv);
+}
 
 /* ---------------- 输入实时解析 ---------------- */
 function parseLocal(text){
@@ -1013,9 +1053,16 @@ $('btnRun').onclick = async ()=>{
     persist: $('persist').checked,
     buildCombined: $('buildCombined').checked,
     workers: (poolState && poolState.ready) ? (poolState.size || POOL_N) : 0,
-    packageImages: $('packageImages').checked
+    packageImages: $('packageImages').checked,
+    downloadProductImages: $('dlProdImg').checked,
+    packageProductImages: $('pkgProdImg').checked,
+    downloadVideos: $('dlVideo').checked,
+    packageProductVideos: $('pkgVideo').checked
   };
   if(body.packageImages) body.downloadImages = true;
+  if(body.packageProductImages) body.downloadProductImages = true;
+  if(body.packageProductVideos) body.downloadVideos = true;
+  if(body.downloadVideos) body.downloadProductImages = true;
 
   resPage = 1; lastResults = [];
   setRunning(true);
@@ -1182,6 +1229,12 @@ function renderProgress(d){
   if(d.zipfile){
     btns.push(`<a href="/api/history/${dirId}/download/zip"><button class="btn sm">下载图片包</button></a>`);
   }
+  if(d.prod_images){
+    btns.push(`<a href="/api/download/product-images.zip?dir=${encodeURIComponent(dirId)}"><button class="btn sm">主图 ZIP (${d.prod_images})</button></a>`);
+  }
+  if(d.prod_videos){
+    btns.push(`<a href="/api/download/product-videos.zip?dir=${encodeURIComponent(dirId)}"><button class="btn sm">视频 ZIP (${d.prod_videos})</button></a>`);
+  }
   if(dirId){
     btns.push(`<button class="btn ghost sm" onclick="fetch('/api/open?path=${encodeURIComponent(dirId)}')">打开目录</button>`);
   }
@@ -1208,6 +1261,7 @@ function renderResults(list){
     const data = p
       ? `<span class="badge ${p.bullets?'ok':'warn'}">五点 ${p.bullets}</span>
          <span class="badge ${p.images?'ok':'warn'}">图 ${p.images}</span>
+         ${p.videos?`<span class="badge ${(p.video&&p.video.files&&p.video.files.length)?'go':(p.video&&(p.video.errors||[]).length?'err':'warn')}">视频 ${p.videos}</span>`:''}
          ${p.highlights?'<span class="badge go">亮点</span>':''}
          ${p.price?`<span class="badge dim">${esc(p.price)}</span>`:''}
          ${p.rating?`<span class="badge dim">★${esc(p.rating)}</span>`:''}`
@@ -1353,6 +1407,10 @@ async function loadHistory(){
           ${it.has_zip
             ? `<span class="badge ok">图片包 ${(it.zip_bytes/1048576).toFixed(1)}MB</span>`
             : ''}
+          ${it.image_count
+            ? `<span class="badge go">主图 ${it.image_count}</span>` : ''}
+          ${it.video_count
+            ? `<span class="badge go">视频 ${it.video_count}</span>` : ''}
         </div>
         <div class="skus">${chips}</div>
         <div class="acts">
@@ -1360,6 +1418,8 @@ async function loadHistory(){
           ${it.has_product?`<a href="/api/export/tool.xlsx?dir=${encodeURIComponent(it.id)}"><button class="btn sm">批量改写导入表</button></a>`:''}
           ${it.has_combined?`<a href="/api/history/${esc(it.id)}/download/combined"><button class="btn sm">合集 HTML</button></a>`:''}
           ${it.has_zip?`<a href="/api/history/${esc(it.id)}/download/zip"><button class="btn sm">图片压缩包</button></a>`:''}
+          ${it.image_count?`<a href="/api/download/product-images.zip?dir=${encodeURIComponent(it.id)}"><button class="btn sm">主图 ZIP</button></a>`:''}
+          ${it.video_count?`<a href="/api/download/product-videos.zip?dir=${encodeURIComponent(it.id)}"><button class="btn sm">视频 ZIP</button></a>`:''}
           <button class="btn ghost sm" onclick="fetch('/api/open?path=${encodeURIComponent(it.dir)}')">定位</button>
         </div>
       </div>`;

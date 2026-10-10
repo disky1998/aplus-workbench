@@ -27,6 +27,7 @@ datas += [
 
 hiddenimports += [
     "appicon", "updater", "version", "tray", "product", "exporter", "pool",
+    "videodl",
     "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto",
     "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.auto",

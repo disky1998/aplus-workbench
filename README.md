@@ -244,6 +244,30 @@ aplus_images.zip
 
 合集 `combined.html` 的每节会标注：类型（普通/高级 A+）、**判定依据**、每个视图用的是 `render.html` 还是 `aplus.html`，以及移动端是「已抓 / 未抓 / 无独立版本」。缺少 `render.html` 时自动退回 `aplus.html`，不会出空节。
 
+## 商品主图打包与商品视频转 MP4
+
+抓「商品信息」时的两个产物，与 A+ 图片**完全分开存放**：
+
+```
+out/<SKU>/images/         商品主图（原生 1600px 大图，00.jpg / 01.jpg …）
+out/<SKU>/video/<SKU>.mp4 商品视频（多个视频会合并成一个 mp4）
+out/product_images.zip    主图包：按 SKU 分文件夹 + manifest.csv
+out/product_videos.zip    视频包：按 SKU 分文件夹
+```
+
+- **主图**来自页面内嵌的 `colorImages.initial` 的 `hiRes`（原生大图 key），取裸 ID 就是 1600×1600；
+  不是缩略图列表里那个最多 500px 的 `_US40_` 小图 key。
+- **视频**亚马逊给的是 **HLS 清单**而不是 mp4 直链。抓取时从页面配置里抠出
+  `"videos":[{"url":"…default.jobtemplate.hls.m3u8", …}]`（`"videosData"` 作右边界定位，
+  并排除 `#va-related-videos-widget` 里的「相关视频」，那些属于别的商品），然后：
+  选最高档（默认 1080p）→ **并行拉 TS 分片** → ffmpeg 无损封装成 MP4。
+- 亚马逊 CDN 对单条连接限速很死（实测 **25 KB/s**），必须靠并发堆带宽 ——
+  同一段 15 个分片：1 路 约 150s / 8 路 31s / **16 路 18s** / 24 路反而 58s，所以并发取 16。
+- **需要 ffmpeg**。Web 界面会自动检测，没有时给一键安装（winget 装 `Gyan.FFmpeg.Essentials`）；
+  未安装时降级保存 `.ts`（可播放，但不是 mp4）并在日志里提示。
+  检测顺序：应用同级目录 → `PATH` → winget Links → `C:\ffmpeg\bin` 等常见位置。
+- 视频下载默认**不勾选**（单个视频约 20~60 秒），在「商品产物」里按需勾。
+
 ## 反爬要点（实测踩坑）
 
 - **桌面 UA 池必须是 macOS 版**：Windows 版 Chrome UA（126/131）实测被亚马逊直接拦下，
@@ -262,8 +286,12 @@ out/<ASIN>/desktop/
 ├── content.json    结构化数据
 └── images/         --download-images 时下载（00.jpg / 01.png …）
 out/<ASIN>/mobile/  同上（普通 A+ 会跳过）
+out/<ASIN>/images/  商品主图（商品信息模式，原生 1600px）
+out/<ASIN>/video/   商品视频 mp4（商品信息模式）
 out/combined.html   按 SKU 分节的合集（--render 时自动生成）
 out/aplus_images.zip A+ 图片包 + manifest.csv（--package-images 时生成）
+out/product_images.zip 商品主图包（商品产物里勾「主图 ZIP」）
+out/product_videos.zip 商品视频包（商品产物里勾「视频 ZIP」）
 ```
 
 `content.json` 字段：

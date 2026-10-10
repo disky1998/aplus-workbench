@@ -39,6 +39,10 @@ except ImportError:
     requests = None
 
 import product as prod
+try:
+    import videodl as vdl
+except Exception:                                     # 视频模块不可用时不影响主流程
+    vdl = None
 
 # ---------------------------------------------------------------- 选择器配置
 
@@ -1241,7 +1245,9 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
               screenshot: bool = False, hires: int = 0,
               folder: str | None = None, state_file: str | None = None,
               mode: str = "auto", want: str = "all",
-              page=None, browser=None):
+              page=None, browser=None,
+              download_product_images: bool = False,
+              download_videos: bool = False, video_quality: int = 1080):
     """抓一个 SKU 的一个视图。
 
     want: all      —— 商品链接信息 + A+ 内容
@@ -1252,6 +1258,9 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
       page     —— 复用预热池里已存在的标签页（桌面端，池化模式；调用方拥有，不关）
       browser  —— CDP 连上的浏览器，临时新开上下文（移动端用，UA/视口必须换）
       都为空    —— 走 browser_ctx_factory（非池化模式）
+
+    download_product_images —— 下载商品主图到 <SKU>/images/
+    download_videos         —— 下载商品视频并合并成 <SKU>/video/<SKU>.mp4
     """
     key = folder or asin
     url = en_url(f"https://www.amazon.{domain}/dp/{asin}")
@@ -1324,7 +1333,49 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
                       f"类目{'✓' if product_data.get('category') else '×'} "
                       f"NodeID{'✓' if product_data.get('nodeId') else '×'} "
                       f"五点 {len(product_data['bullets'])} 条 "
-                      f"主图 {len(product_data['images'])} 张")
+                      f"主图 {len(product_data['images'])} 张 "
+                      f"视频 {len(product_data.get('videos') or [])} 个")
+
+                # ---- 商品主图 / 商品视频（与 A+ 的 desktop/images 分开存）----
+                # 只做一次：商品信息只在桌面端抓，移动端不再重复下载
+                if download_product_images or download_videos:
+                    pdir = out_root / key
+                    if download_product_images and product_data.get("images"):
+                        got, failed = save_images(ctx, product_data["images"],
+                                                  pdir / "images", hires=0)
+                        product_data["downloaded_images"] = got
+                        if failed:
+                            product_data["download_failed"] = failed
+                            print(f"    [warn] {failed} 张主图下载失败")
+                        print(f"    [主图] 已下载 {got}/{len(product_data['images'])} 张"
+                              f" -> {pdir / 'images'}")
+                    if download_videos:
+                        vids = product_data.get("videos") or []
+                        if not vids:
+                            print("    [视频] 该商品没有视频")
+                        elif vdl is None:
+                            print("    [warn] 视频模块不可用，跳过")
+                        else:
+                            vres = vdl.download_videos(vids, pdir / "video",
+                                                       log=print,
+                                                       prefer=int(video_quality or 1080))
+                            product_data["download_videos"] = {
+                                "count": vres.get("count", 0),
+                                "quality": vres.get("quality", ""),
+                                "bytes": vres.get("bytes", 0),
+                                "files": [p.name for p in (vres.get("files") or [])],
+                                "errors": vres.get("errors") or [],
+                            }
+                            if vres.get("files"):
+                                mb = vres.get("bytes", 0) / 1048576
+                                print(f"    [视频] 已合并 {len(vres['files'])} 个 mp4"
+                                      f"（{vres.get('quality') or '?'}，{mb:.1f} MB）"
+                                      f" -> {pdir / 'video'}")
+                            for e in (vres.get("errors") or []):
+                                print(f"    [warn] {e}")
+                    (pdir / "product.json").write_text(
+                        json.dumps(product_data, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
 
         if want == "product":
             return {"asin": asin, "viewport": viewport, "url": url,

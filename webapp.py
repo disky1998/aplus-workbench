@@ -37,6 +37,10 @@ import product as prodmod  # noqa: E402
 import pool as poolmod  # noqa: E402
 import updater as UPD  # noqa: E402
 import version as V  # noqa: E402
+try:
+    import videodl as vdl  # noqa: E402  商品视频（HLS -> MP4）
+except Exception:                                          # pragma: no cover
+    vdl = None
 
 PORT = int(os.environ.get("APLUS_PORT", "8788"))
 POOL_SIZE = int(os.environ.get("APLUS_POOL", "6"))
@@ -74,6 +78,8 @@ class Task:
         self.results: list = []
         self.combined = None
         self.zipfile = None
+        self.images_zip = None      # product_images.zip（商品主图包）
+        self.videos_zip = None      # product_videos.zip（商品视频包）
         self.outdir: Path = WEB_OUT / tid
         self.started = time.time()
         self.stop_flag = False
@@ -226,7 +232,10 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                     int(o.get("hires", 0) or 0),
                     folder=sku, state_file=sf,
                     mode=mode, want=want,
-                    page=pool_page, browser=pool_browser)
+                    page=pool_page, browser=pool_browser,
+                    download_product_images=bool(o.get("downloadProductImages")),
+                    download_videos=bool(o.get("downloadVideos")),
+                    video_quality=int(o.get("videoQuality", 1080) or 1080))
                 err = None
                 break
             except Exception as e:
@@ -255,6 +264,7 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                 "title": (prod.get("title") or "")[:120],
                 "bullets": len(prod.get("bullets") or []),
                 "images": len(prod.get("images") or []),
+                "videos": len(prod.get("videos") or []),
                 "highlights": bool(prod.get("highlights")),
                 "category": prod.get("category") or "",
                 "nodeId": prod.get("nodeId") or "",
@@ -263,6 +273,8 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                 "rating": prod.get("rating") or "",
                 "reviews": prod.get("reviews") or "",
                 "bulletsSource": prod.get("bulletsSource") or "",
+                "gotImages": prod.get("downloaded_images", 0),
+                "video": prod.get("download_videos") or {},
                 "miss": prodmod.missing_fields(prod),
             }
 
@@ -543,6 +555,46 @@ def run_task(task: Task):
                     traceback.print_exc(file=lw)
         lw.flush()
 
+    # 商品主图 / 商品视频打包（与 want 无关，只要勾了下载就打包）
+    if not task.stop_flag and (o.get("packageProductImages") or o.get("packageProductVideos")):
+        if vdl is None:
+            task.log("[warn] 视频/图片打包模块不可用，跳过")
+        else:
+            lw = LogWriter(task)
+            import contextlib
+            with contextlib.redirect_stdout(lw), contextlib.redirect_stderr(lw):
+                if o.get("packageProductImages"):
+                    print("\n[打包] 正在压缩商品主图 ...")
+                    try:
+                        zpath = out_root / "product_images.zip"
+                        res = vdl.package_product_images(out_root, items, zpath)
+                        if res.get("empty"):
+                            print("[打包] 没有可打包的主图（未勾选「下载主图」或该商品无主图）")
+                        else:
+                            task.images_zip = zpath.relative_to(WEB_OUT).as_posix()
+                            print(f"[完成] 主图压缩包 -> {zpath}"
+                                  f"（{res['count']} 张 / {res['skus']} 个 SKU / "
+                                  f"{res['bytes'] // 1048576} MB）")
+                    except Exception as e:
+                        print(f"[warn] 主图打包失败 -> {e}")
+                        traceback.print_exc(file=lw)
+                if o.get("packageProductVideos"):
+                    print("[打包] 正在压缩商品视频 ...")
+                    try:
+                        zpath = out_root / "product_videos.zip"
+                        res = vdl.package_videos(out_root, items, zpath)
+                        if res.get("empty"):
+                            print("[打包] 没有可打包的视频（未勾选「下载视频」或该商品无视频）")
+                        else:
+                            task.videos_zip = zpath.relative_to(WEB_OUT).as_posix()
+                            print(f"[完成] 视频压缩包 -> {zpath}"
+                                  f"（{res['count']} 个 / {res['skus']} 个 SKU / "
+                                  f"{res['bytes'] // 1048576} MB）")
+                    except Exception as e:
+                        print(f"[warn] 视频打包失败 -> {e}")
+                        traceback.print_exc(file=lw)
+            lw.flush()
+
     task.log(f"[结束] 状态={task.status} 用时={time.time()-task.started:.0f}s")
 
 
@@ -715,6 +767,28 @@ def driver_links(version: str):
 
 # ---------------------------------------------------------------- API
 
+def _count_product_assets(out_root: Path) -> tuple:
+    """数一下产出目录里已落的商品主图 / 商品视频文件数"""
+    ni = nv = 0
+    try:
+        if not out_root.is_dir():
+            return 0, 0
+        for sd in out_root.iterdir():
+            if not sd.is_dir():
+                continue
+            for name, key in (("images", "i"), ("video", "v")):
+                sub = sd / name
+                if sub.is_dir():
+                    n = sum(1 for f in sub.iterdir() if f.is_file())
+                    if key == "i":
+                        ni += n
+                    else:
+                        nv += n
+    except Exception:
+        pass
+    return ni, nv
+
+
 class RunRequest(BaseModel):
     text: str
     domain: str = "ae"
@@ -735,6 +809,11 @@ class RunRequest(BaseModel):
     buildCombined: bool = True        # 抓完生成合集 HTML
     packageImages: bool = True        # 抓完打包 A+ 图片
     workers: int = 0                  # 并行路数；0 = 用预热池的规模
+    downloadProductImages: bool = False   # 下载商品主图到 <SKU>/images/
+    downloadVideos: bool = False          # 下载商品视频并合并成 mp4
+    videoQuality: int = 1080              # 视频首选清晰度
+    packageProductImages: bool = False    # 打包 product_images.zip
+    packageProductVideos: bool = False    # 打包 product_videos.zip
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -747,7 +826,18 @@ def api_env():
     ch = detect_chrome()
     pw = playwright_browsers()
     ch["drivers"] = driver_links(ch["version"]) if ch["version"] else []
-    return {"chrome": ch, "playwright": pw,
+    ff = {"ok": False, "path": "", "version": ""}
+    if vdl is not None:
+        fp = vdl.ffmpeg_path()
+        if fp:
+            ff["ok"] = True
+            ff["path"] = fp
+            try:
+                rc, out = vdl._run([fp, "-version"])
+                ff["version"] = (out.splitlines() or [""])[0][:60] if rc == 0 else ""
+            except Exception:
+                pass
+    return {"chrome": ch, "playwright": pw, "ffmpeg": ff,
             "python": sys.version.split()[0],
             "version": V.__version__,
             "app": V.APP_NAME,
@@ -866,6 +956,56 @@ def api_install_playwright():
     return {"task_id": tid}
 
 
+@app.post("/api/env/install-ffmpeg")
+def api_install_ffmpeg():
+    """一键安装 ffmpeg（商品视频转 mp4 需要）—— 优先 winget，失败则提示手动装"""
+    tid = f"env-{int(time.time())}"
+    t = Task(tid, [], "", {})
+    t.status = "running"
+    with TASKS_LOCK:
+        TASKS[tid] = t
+
+    def _work():
+        lw = LogWriter(t)
+        try:
+            if vdl is None:
+                t.log("[错误] 视频模块不可用")
+                return
+            if vdl.has_ffmpeg():
+                t.log(f"[跳过] 已检测到 ffmpeg：{vdl.ffmpeg_path()}")
+                return
+            wg = shutil.which("winget")
+            if not wg:
+                t.log("[错误] 没有找到 winget，请手动安装 ffmpeg 后重试")
+                t.log("       下载：https://www.gyan.dev/ffmpeg/builds/  解压后把 bin 加入 PATH")
+                return
+            cmd = [wg, "install", "--id", "Gyan.FFmpeg.Essentials", "-e",
+                   "--accept-source-agreements", "--accept-package-agreements",
+                   "--disable-interactivity"]
+            t.log(f"$ {' '.join(cmd)}")
+            pr = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True,
+                                  encoding="utf-8", errors="replace", cwd=str(HERE))
+            for line in pr.stdout:
+                t.log(line.rstrip())
+            pr.wait()
+            t.log(f"[exit] {pr.returncode}")
+            vdl._FFMPEG_CACHE.update(path=None, probed=False)
+            if vdl.has_ffmpeg():
+                t.log(f"[完成] ffmpeg 就绪：{vdl.ffmpeg_path()}")
+            else:
+                t.log("[提示] 装完请重启本程序，让新的 PATH 生效")
+        except Exception as e:
+            t.log(f"[错误] {e}")
+        finally:
+            lw.flush()
+            t.status = "done"
+            t.log("[结束]")
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"task_id": tid}
+
+
 @app.post("/api/run")
 def api_run(req: RunRequest):
     items, bad = parse_inputs(req.text)
@@ -887,9 +1027,12 @@ def api_task(tid: str, since: int = 0):
     if not t:
         raise HTTPException(404, "任务不存在")
     d = t.since(since)
+    ni, nv = _count_product_assets(t.outdir)
     d.update({"id": t.id, "status": t.status, "progress": t.progress,
               "results": t.results, "combined": t.combined, "workers": t.workers,
-              "zipfile": t.zipfile, "outdir": str(t.outdir)})
+              "zipfile": t.zipfile, "images_zip": t.images_zip,
+              "videos_zip": t.videos_zip, "prod_images": ni, "prod_videos": nv,
+              "outdir": str(t.outdir)})
     return d
 
 
@@ -984,13 +1127,21 @@ def scan_history():
                 except Exception:
                     pdata = {}
                 if pdata:
+                    vids = pdata.get("videos") or []
+                    idir = sub / "images"
+                    vdir = sub / "video"
                     product = {
                         "title": (pdata.get("title") or "")[:80],
                         "bullets": len(pdata.get("bullets") or []),
                         "images": len(pdata.get("images") or []),
+                        "videos": len(vids),
                         "highlights": bool(pdata.get("highlights")),
                         "brand": pdata.get("brand") or "",
                         "price": pdata.get("price") or "",
+                        "localImages": len([f for f in idir.iterdir() if f.is_file()])
+                                       if idir.is_dir() else 0,
+                        "localVideos": len([f for f in vdir.iterdir() if f.is_file()])
+                                       if vdir.is_dir() else 0,
                     }
             if not vps and not product:
                 continue
@@ -1017,6 +1168,8 @@ def scan_history():
 
         zp = d / "aplus_images.zip"
         cp = d / "combined.html"
+        pz = d / "product_images.zip"
+        vz = d / "product_videos.zip"
         has_product = any(s.get("product") for s in skus)
         out.append({
             "id": d.name,
@@ -1029,6 +1182,14 @@ def scan_history():
             "zip_bytes": zp.stat().st_size if zp.exists() else 0,
             "has_combined": cp.exists(),
             "combined_bytes": cp.stat().st_size if cp.exists() else 0,
+            "has_product_zip": pz.exists(),
+            "product_zip_bytes": pz.stat().st_size if pz.exists() else 0,
+            "has_video_zip": vz.exists(),
+            "video_zip_bytes": vz.stat().st_size if vz.exists() else 0,
+            "video_count": sum(s.get("product", {}).get("localVideos", 0)
+                               for s in skus if s.get("product")),
+            "image_count": sum(s.get("product", {}).get("localImages", 0)
+                               for s in skus if s.get("product")),
             "mtime": time.strftime("%Y-%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
         })
     return out
@@ -1055,6 +1216,67 @@ def api_history_combined(tid: str):
         raise HTTPException(404, "还没有合集 HTML，请先点「重建合集」")
     return FileResponse(str(p), media_type="text/html",
                         filename=f"Aplus_combined_{tid}.html")
+
+
+# ------------------------------------------------ 商品主图 / 商品视频（按需打包）
+
+def _build_product_zip(kind: str, d: Path) -> Path:
+    """按需打包：zip 不存在就现打一份。kind = images | videos"""
+    if vdl is None:
+        raise HTTPException(500, "打包模块不可用")
+    zname = "product_images.zip" if kind == "images" else "product_videos.zip"
+    zpath = d / zname
+    # 有历史 zip 且不旧于任何图片/视频文件 -> 直接用
+    if zpath.exists():
+        newest = 0.0
+        for sd in d.iterdir():
+            if not sd.is_dir():
+                continue
+            sub = sd / ("images" if kind == "images" else "video")
+            if sub.is_dir():
+                for f in sub.iterdir():
+                    if f.is_file():
+                        newest = max(newest, f.stat().st_mtime)
+        if newest <= zpath.stat().st_mtime:
+            return zpath
+    if kind == "images":
+        res = vdl.package_product_images(d, None, zpath)
+    else:
+        res = vdl.package_videos(d, None, zpath)
+    if res.get("empty"):
+        try:
+            zpath.unlink()
+        except Exception:
+            pass
+        what = "商品主图" if kind == "images" else "商品视频"
+        raise HTTPException(404, f"没有可打包的{what}（未勾选下载，或该批商品没有）")
+    return zpath
+
+
+@app.get("/api/download/product-images.zip")
+def api_download_product_images(dir: str = ""):
+    d = _resolve_dir(dir)
+    p = _build_product_zip("images", d)
+    return FileResponse(str(p), media_type="application/zip",
+                        filename=f"商品主图_{d.name}.zip")
+
+
+@app.get("/api/download/product-videos.zip")
+def api_download_product_videos(dir: str = ""):
+    d = _resolve_dir(dir)
+    p = _build_product_zip("videos", d)
+    return FileResponse(str(p), media_type="application/zip",
+                        filename=f"商品视频_{d.name}.zip")
+
+
+@app.get("/api/output/file")
+def api_output_file(dir: str = "", rel: str = ""):
+    """下载产出目录里的单个文件（如某个 SKU 的 mp4 / 主图）"""
+    d = _resolve_dir(dir).resolve()
+    p = (d / rel).resolve()
+    if not str(p).startswith(str(d)) or not p.is_file():
+        raise HTTPException(404, "文件不存在")
+    return FileResponse(str(p), filename=p.name)
 
 
 # ---------------------------------------------------------------- 商品信息导出
