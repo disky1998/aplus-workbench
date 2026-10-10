@@ -1247,7 +1247,8 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
               mode: str = "auto", want: str = "all",
               page=None, browser=None,
               download_product_images: bool = False,
-              download_videos: bool = False, video_quality: int = 1080):
+              download_videos: bool = False, video_quality: int = 1080,
+              merge_videos: bool = False):
     """抓一个 SKU 的一个视图。
 
     want: all      —— 商品链接信息 + A+ 内容
@@ -1260,7 +1261,8 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
       都为空    —— 走 browser_ctx_factory（非池化模式）
 
     download_product_images —— 下载商品主图到 <SKU>/images/
-    download_videos         —— 下载商品视频并合并成 <SKU>/video/<SKU>.mp4
+    download_videos         —— 下载商品视频到 <SKU>/video/（默认按原样分开保存）
+    merge_videos            —— True 时把多个视频合成单个 <SKU>.mp4
     """
     key = folder or asin
     url = en_url(f"https://www.amazon.{domain}/dp/{asin}")
@@ -1358,19 +1360,16 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
                         else:
                             vres = vdl.download_videos(vids, pdir / "video",
                                                        log=print,
-                                                       prefer=int(video_quality or 1080))
+                                                       prefer=int(video_quality or 1080),
+                                                       merge=bool(merge_videos))
                             product_data["download_videos"] = {
                                 "count": vres.get("count", 0),
                                 "quality": vres.get("quality", ""),
                                 "bytes": vres.get("bytes", 0),
+                                "merged": bool(merge_videos),
                                 "files": [p.name for p in (vres.get("files") or [])],
                                 "errors": vres.get("errors") or [],
                             }
-                            if vres.get("files"):
-                                mb = vres.get("bytes", 0) / 1048576
-                                print(f"    [视频] 已合并 {len(vres['files'])} 个 mp4"
-                                      f"（{vres.get('quality') or '?'}，{mb:.1f} MB）"
-                                      f" -> {pdir / 'video'}")
                             for e in (vres.get("errors") or []):
                                 print(f"    [warn] {e}")
                     (pdir / "product.json").write_text(

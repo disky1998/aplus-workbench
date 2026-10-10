@@ -649,8 +649,10 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
                 <input type="checkbox" id="dlProdImg" checked><span class="track"></span><span class="txt">下载主图</span></label>
               <label class="sw" title="抓完打包成 product_images.zip（按 SKU 分文件夹 + manifest.csv），会自动勾选「下载主图」">
                 <input type="checkbox" id="pkgProdImg" checked><span class="track"></span><span class="txt">主图 ZIP</span></label>
-              <label class="sw" title="下载商品视频并合并成一个 mp4，存到 &lt;SKU&gt;/video/&lt;SKU&gt;.mp4（优先 1080p）">
+              <label class="sw" title="下载商品视频到 &lt;SKU&gt;/video/（优先 1080p）。默认按原样分开保存：1 个 → &lt;SKU&gt;.mp4，多个 → &lt;SKU&gt;-1.mp4 / &lt;SKU&gt;-2.mp4 …">
                 <input type="checkbox" id="dlVideo"><span class="track"></span><span class="txt">视频 → MP4</span></label>
+              <label class="sw" title="把多个视频用 ffmpeg 拼成单个 &lt;SKU&gt;.mp4。不勾（默认）= 页面上有几个就存几个">
+                <input type="checkbox" id="mergeVideo"><span class="track"></span><span class="txt">多视频合一</span></label>
               <label class="sw" title="抓完打包成 product_videos.zip，会自动勾选「视频 → MP4」">
                 <input type="checkbox" id="pkgVideo"><span class="track"></span><span class="txt">视频 ZIP</span></label>
             </div>
@@ -921,7 +923,7 @@ async function loadEnv(){
     const ff = d.ffmpeg || {};
     if($('ffmpegTip')){
       $('ffmpegTip').innerHTML = ff.ok
-        ? `<span class="badge ok">ffmpeg 已就绪</span> 商品视频会自动合成 MP4`
+        ? `<span class="badge ok">ffmpeg 已就绪</span> 商品视频会自动转成 MP4`
         : `<span class="badge warn">未检测到 ffmpeg</span> 商品视频将保存为 .ts ——
            <a href="#" id="btnFfmpeg"><b>点这里一键安装</b></a>`;
       const bf = $('btnFfmpeg');
@@ -1057,6 +1059,7 @@ $('btnRun').onclick = async ()=>{
     downloadProductImages: $('dlProdImg').checked,
     packageProductImages: $('pkgProdImg').checked,
     downloadVideos: $('dlVideo').checked,
+    mergeVideos: $('mergeVideo').checked,
     packageProductVideos: $('pkgVideo').checked
   };
   if(body.packageImages) body.downloadImages = true;

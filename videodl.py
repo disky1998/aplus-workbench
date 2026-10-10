@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""商品视频下载 + 合并成 MP4
+"""商品视频下载 + 转成 MP4
 
 亚马逊商品视频（VSE）给的是 HLS 清单（.m3u8），不是 mp4 直链：
 
@@ -8,7 +8,13 @@
             └── default.jobtemplate.hls1080_00001.ts ...
 
 所以流程是：选最高档 -> 并行拉分片 -> 拼成一个 .ts -> 用 ffmpeg 无损封装成 .mp4。
-一个商品有多个视频时，最后再用 ffmpeg concat 合成单个 <SKU>.mp4。
+
+一个商品有多个视频时，**默认按原样分开保存**（页面上几个就几个）：
+
+    1 个视频  -> <SKU>.mp4
+    3 个视频  -> <SKU>-1.mp4  <SKU>-2.mp4  <SKU>-3.mp4
+
+需要合成单个文件时传 merge=True（走 ffmpeg concat）。
 
 ffmpeg 缺失时降级保存 .ts（可播放，但不是 mp4），并在日志里明确提示。
 """
@@ -332,11 +338,17 @@ def merge_mp4s(paths: list, out_path: Path, log=None) -> tuple:
 
 
 def download_videos(videos: list, dest_dir: Path, log=None,
-                    prefer: int = PREFER_HEIGHT) -> dict:
-    """下载一个 SKU 的全部商品视频并合并成 <SKU>.mp4
+                    prefer: int = PREFER_HEIGHT, merge: bool = False) -> dict:
+    """下载一个 SKU 的全部商品视频。
 
     videos: product.py 抓到的 [{'url':..., 'title':..., 'duration':..., ...}]
-    返回 {'files': [完成后的 mp4 路径], 'parts': [中间 mp4 路径], 'errors': [...]}
+    merge:  False（默认）= 按原样分开保存
+                1 个视频 -> <SKU>.mp4
+                多个视频 -> <SKU>-1.mp4 <SKU>-2.mp4 ...
+            True = 用 ffmpeg concat 全部合成单个 <SKU>.mp4
+
+    返回 {'files': [落盘后的文件], 'parts': [临时文件], 'errors': [...],
+          'count': 实际产出的文件数, 'bytes': 总字节, 'quality': 清晰度, 'need_ffmpeg': bool}
     """
     dest_dir = Path(dest_dir)
     res = {"files": [], "parts": [], "errors": [], "count": 0,
@@ -348,7 +360,8 @@ def download_videos(videos: list, dest_dir: Path, log=None,
     ff = ffmpeg_path()
     log = log or (lambda *_a, **_k: None)
     tmp = Path(tempfile.mkdtemp(prefix="amzv_"))
-    parts = []
+    parts = []                    # [(序号, 临时文件)]，序号 = 页面上的第几个视频
+    qualities = []
     try:
         for i, v in enumerate(vids, 1):
             url = v["url"]
@@ -362,57 +375,93 @@ def download_videos(videos: list, dest_dir: Path, log=None,
                     # 直链 mp4
                     p = tmp / f"{stem}.mp4"
                     p.write_bytes(_get(url))
-                    parts.append(p)
+                    parts.append((i, p))
                     log(f"      直链 mp4 -> {p.stat().st_size // 1024} KB")
                 else:
                     ts = tmp / f"{stem}.ts"
                     meta = download_hls(url, ts, log, prefer)
-                    res["quality"] = meta.get("quality") or res["quality"]
+                    q = meta.get("quality") or ""
+                    if q:
+                        qualities.append(q)
                     if ff:
                         mp4 = tmp / f"{stem}.mp4"
                         ok, err = ts_to_mp4(ts, mp4, log)
                         if ok:
-                            parts.append(mp4)
+                            parts.append((i, mp4))
                             try:
                                 ts.unlink()
                             except Exception:
                                 pass
                         else:
                             res["errors"].append(f"视频{i} 转 mp4 失败: {err}")
-                            parts.append(ts)
+                            parts.append((i, ts))
                     else:
                         res["need_ffmpeg"] = True
-                        parts.append(ts)
+                        parts.append((i, ts))
                         log("      ⚠ 未检测到 ffmpeg，已保存为 .ts（装上 ffmpeg 可自动转 mp4）")
             except Exception as e:
                 res["errors"].append(f"视频{i}: {str(e)[:160]}")
                 log(f"      ✗ 失败 -> {str(e)[:160]}")
 
+        if qualities:
+            res["quality"] = "/".join(sorted(set(qualities)))
         if not parts:
             return res
 
-        ext = ".ts" if all(p.suffix == ".ts" for p in parts) else ".mp4"
-        out = dest_dir / f"{dest_dir.parent.name}{ext}"
-        ok, err = merge_mp4s(parts, out, log)
-        if ok:
-            res["files"].append(out)
-            res["bytes"] = out.stat().st_size
-            res["parts"] = list(parts)
-            res["count"] = len(vids)
+        res["parts"] = [p for _i, p in parts]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        sku = dest_dir.parent.name or "video"
+
+        if merge:
+            ext = ".ts" if all(p.suffix == ".ts" for _i, p in parts) else ".mp4"
+            out = dest_dir / f"{sku}{ext}"
+            ok, err = merge_mp4s([p for _i, p in parts], out, log)
+            if ok:
+                res["files"].append(out)
+                res["bytes"] = out.stat().st_size
+                res["count"] = len(vids)
+                _summary(log, "已合并为 1 个 mp4", res, out)
+            else:
+                res["errors"].append(f"合并失败: {err}")
+                _spill_parts(parts, dest_dir, sku, res)
         else:
-            res["errors"].append(f"合并失败: {err}")
-            # 合并失败也要把已下好的分片留下，别白干
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            for i, p in enumerate(parts, 1):
+            # 按原样分开保存；商品本来就有多个视频时带序号，便于对应页面顺序
+            multi = len(vids) > 1
+            for idx, p in parts:
+                name = f"{sku}-{idx}{p.suffix}" if multi else f"{sku}{p.suffix}"
+                dst = dest_dir / name
                 try:
-                    q = dest_dir / f"{dest_dir.parent.name}_{i:02d}{p.suffix}"
-                    shutil.copyfile(p, q)
-                    res["files"].append(q)
-                except Exception:
-                    pass
+                    if p.resolve() != dst.resolve():
+                        shutil.copyfile(p, dst)
+                    res["files"].append(dst)
+                    res["bytes"] += dst.stat().st_size
+                except Exception as e:
+                    res["errors"].append(f"视频{idx} 落盘失败: {str(e)[:120]}")
+            res["count"] = len(res["files"])
+            if res["files"]:
+                _summary(log, f"已保存 {len(res['files'])} 个 mp4", res, dest_dir)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return res
+
+
+def _summary(log, what: str, res: dict, where: Path) -> None:
+    """统一的一行产出摘要：已保存 3 个 mp4（1080p，42.5 MB） -> <目录>"""
+    bits = [b for b in (res.get("quality"), f"{res.get('bytes', 0) / 1048576:.1f} MB") if b]
+    log(f"    [视频] {what}（{'，'.join(bits)}） -> {where}")
+
+
+def _spill_parts(parts: list, dest_dir: Path, sku: str, res: dict) -> None:
+    """合并失败时的兜底：把已下好的分片按序号单独留下，别白干"""
+    for idx, p in parts:
+        try:
+            q = dest_dir / f"{sku}-{idx}{p.suffix}"
+            shutil.copyfile(p, q)
+            res["files"].append(q)
+            res["bytes"] += q.stat().st_size
+        except Exception:
+            pass
+    res["count"] = len(res["files"])
 
 
 def package_videos(out_root: Path, items=None, zip_path: Path | None = None) -> dict:

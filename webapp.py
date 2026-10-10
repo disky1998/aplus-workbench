@@ -235,7 +235,8 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                     page=pool_page, browser=pool_browser,
                     download_product_images=bool(o.get("downloadProductImages")),
                     download_videos=bool(o.get("downloadVideos")),
-                    video_quality=int(o.get("videoQuality", 1080) or 1080))
+                    video_quality=int(o.get("videoQuality", 1080) or 1080),
+                    merge_videos=bool(o.get("mergeVideos")))
                 err = None
                 break
             except Exception as e:
@@ -810,8 +811,9 @@ class RunRequest(BaseModel):
     packageImages: bool = True        # 抓完打包 A+ 图片
     workers: int = 0                  # 并行路数；0 = 用预热池的规模
     downloadProductImages: bool = False   # 下载商品主图到 <SKU>/images/
-    downloadVideos: bool = False          # 下载商品视频并合并成 mp4
+    downloadVideos: bool = False          # 下载商品视频
     videoQuality: int = 1080              # 视频首选清晰度
+    mergeVideos: bool = False             # True=多个视频合成单个 mp4；False=按原样分开
     packageProductImages: bool = False    # 打包 product_images.zip
     packageProductVideos: bool = False    # 打包 product_videos.zip
 

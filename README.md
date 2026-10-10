@@ -250,7 +250,9 @@ aplus_images.zip
 
 ```
 out/<SKU>/images/         商品主图（原生 1600px 大图，00.jpg / 01.jpg …）
-out/<SKU>/video/<SKU>.mp4 商品视频（多个视频会合并成一个 mp4）
+out/<SKU>/video/<SKU>.mp4      商品视频（页面只有 1 个视频时）
+out/<SKU>/video/<SKU>-1.mp4    商品视频（页面上第 1 个）
+out/<SKU>/video/<SKU>-2.mp4    商品视频（页面上第 2 个）…
 out/product_images.zip    主图包：按 SKU 分文件夹 + manifest.csv
 out/product_videos.zip    视频包：按 SKU 分文件夹
 ```
@@ -261,6 +263,8 @@ out/product_videos.zip    视频包：按 SKU 分文件夹
   `"videos":[{"url":"…default.jobtemplate.hls.m3u8", …}]`（`"videosData"` 作右边界定位，
   并排除 `#va-related-videos-widget` 里的「相关视频」，那些属于别的商品），然后：
   选最高档（默认 1080p）→ **并行拉 TS 分片** → ffmpeg 无损封装成 MP4。
+- **多个视频默认按原样分开保存**，序号 = 页面上的第几个视频（某个失败会跳号，便于对账）。
+  想拼成单个文件就勾「多视频合一」（ffmpeg concat）。每个视频各自独立选清晰度。
 - 亚马逊 CDN 对单条连接限速很死（实测 **25 KB/s**），必须靠并发堆带宽 ——
   同一段 15 个分片：1 路 约 150s / 8 路 31s / **16 路 18s** / 24 路反而 58s，所以并发取 16。
 - **需要 ffmpeg**。Web 界面会自动检测，没有时给一键安装（winget 装 `Gyan.FFmpeg.Essentials`）；
