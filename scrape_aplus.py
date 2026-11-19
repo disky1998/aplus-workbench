@@ -1295,9 +1295,16 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
                                 include_brand_story=include_brand_story,
                                 wait_aplus=(want != "product"))
         else:
-            # 复用预热标签页：只导航，不创建也不关闭
+            # 复用预热标签页：只导航，不创建也不关闭。
+            #
+            # 这里**故意不调用 force_english()**。6 路并行时 6 个独立的
+            # Playwright 连接会同时写同一个共享 default context，而
+            # set_extra_http_headers 会广播到该 context 下全部标签页；
+            # 其它标签页正忙（导航/滚动）时这个调用可能一直不返回，
+            # 而 Playwright 对这类命令没有超时 —— 一个 worker 卡住后
+            # 整批任务会永久停在中途（历史事故：17 个 SKU 停在 9/17 = 53%）。
+            # 语言由 URL 里的 language=en_US（en_url）+ 预热时设的 cookie 保证。
             ctx = page.context
-            force_english(ctx, domain)
             navigate(page, url, scroll=scroll,
                      include_brand_story=include_brand_story,
                      wait_aplus=(want != "product"))

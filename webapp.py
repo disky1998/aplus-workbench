@@ -496,8 +496,43 @@ def _run_task_pool(task, want, mode, workers):
                        for i in range(workers)]
             for t in threads:
                 t.start()
-            for t in threads:
-                t.join()
+
+            # 看门狗：Playwright 的同步调用没有超时，6 路并行时一旦某个 CDP
+            # 会话卡住，整批会永久停在中途（历史事故：17 个 SKU 停在 9/17 = 53%）。
+            # 这里按「done 是否还在增长」判断停滞，超时就把任务判失败并重建浏览器，
+            # 让界面能明确报错，而不是一直挂着。
+            stall_sec = int(o.get("stallTimeout", 300) or 0)
+            last_done, last_move = -1, time.time()
+            stalled = False
+            while any(t.is_alive() for t in threads):
+                for t in threads:
+                    if t.is_alive():
+                        t.join(timeout=5)
+                        break
+                d = task.progress.get("done", 0)
+                if d != last_done:
+                    last_done, last_move = d, time.time()
+                elif stall_sec and (time.time() - last_move) > stall_sec:
+                    stalled = True
+                    dur = (f"{stall_sec // 60} 分钟" if stall_sec >= 60
+                           else f"{stall_sec} 秒")
+                    print(f"[看门狗] {dur}没有任何进展"
+                          f"（已完成 {d}/{len(items)}），判定浏览器调用挂起，终止本批")
+                    print("[看门狗] 已完成 SKU 的产物都已落盘；浏览器将自动重建，"
+                          "重新预热后可只跑剩余 SKU")
+                    task.stop_flag = True
+                    task.status = "error"
+                    break
+
+            if stalled:
+                # 卡死的 Playwright 连接会一直占着标签页，必须重建浏览器
+                try:
+                    POOL.close()
+                    print("[看门狗] 浏览器已关闭，请重新点「预热浏览器」后再跑")
+                except Exception as e:
+                    print(f"[看门狗] 关闭浏览器失败：{e}")
+                for t in threads:
+                    t.join(timeout=3)
     except Exception as e:
         task.log(f"[致命错误] {e}")
         task.log(traceback.format_exc())
@@ -818,6 +853,7 @@ class RunRequest(BaseModel):
     mergeVideos: bool = False             # True=多个视频合成单个 mp4；False=按原样分开
     packageProductImages: bool = False    # 打包 product_images.zip
     packageProductVideos: bool = False    # 打包 product_videos.zip
+    stallTimeout: int = 300               # 秒：连续多久没有任何 SKU 完成就判定卡死（0=关闭）
 
 
 @app.get("/", response_class=HTMLResponse)
