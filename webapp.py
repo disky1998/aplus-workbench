@@ -82,6 +82,7 @@ class Task:
         self.videos_zip = None      # product_videos.zip（商品视频包）
         self.outdir: Path = WEB_OUT / tid
         self.started = time.time()
+        self.finished = None               # 结束时刻（进度恢复用）
         self.stop_flag = False
         self.workers = 1
         self._q = queue.Queue()
@@ -597,6 +598,7 @@ def run_task(task: Task):
             lw.flush()
 
     task.log(f"[结束] 状态={task.status} 用时={time.time()-task.started:.0f}s")
+    task.finished = time.time()
 
 
 # ---------------------------------------------------------------- 环境检测
@@ -952,6 +954,7 @@ def api_install_playwright():
         finally:
             lw.flush()
             t.status = "done"
+            t.finished = time.time()
             t.log("[结束]")
 
     threading.Thread(target=_work, daemon=True).start()
@@ -1002,6 +1005,7 @@ def api_install_ffmpeg():
         finally:
             lw.flush()
             t.status = "done"
+            t.finished = time.time()
             t.log("[结束]")
 
     threading.Thread(target=_work, daemon=True).start()
@@ -1034,6 +1038,7 @@ def api_task(tid: str, since: int = 0):
               "results": t.results, "combined": t.combined, "workers": t.workers,
               "zipfile": t.zipfile, "images_zip": t.images_zip,
               "videos_zip": t.videos_zip, "prod_images": ni, "prod_videos": nv,
+              "started": t.started, "finished": t.finished,
               "outdir": str(t.outdir)})
     return d
 

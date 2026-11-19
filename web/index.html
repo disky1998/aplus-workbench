@@ -1082,6 +1082,7 @@ $('btnRun').onclick = async ()=>{
     const d = await r.json();
     if(!r.ok){ toast(d.detail || '提交失败','err'); setRunning(false); return; }
     curTask = d.task_id;
+    try{ localStorage.setItem('aplus_last_task', d.task_id); }catch(e){}
     runStart = Date.now();
     resetStats(d.count);
     $('runInfo').textContent = `${d.count} 个 SKU · ${d.task_id}`;
@@ -1190,6 +1191,66 @@ function startPoll(onEnd){
       }
     }catch(e){}
   }, 1200);
+}
+
+/* 刷新 / 重新打开页面后，把后端还在跑（或刚跑完）的任务状态接回来 */
+async function restoreTask(){
+  let tid = null;
+  // 1) 优先接续后端仍在运行的任务（刷新浏览器不影响后端线程）
+  try{
+    const r = await fetch('/api/tasks');
+    if(r.ok){
+      const list = await r.json();
+      const run = (list || []).find(t => t.status === 'running');
+      if(run) tid = run.id;
+    }
+  }catch(e){}
+  // 2) 没有在跑的，就恢复上次提交的那个（刷新后结果不丢）
+  if(!tid){ try{ tid = localStorage.getItem('aplus_last_task'); }catch(e){} }
+  if(!tid) return;
+
+  let d = null;
+  try{
+    const r = await fetch(`/api/task/${encodeURIComponent(tid)}?since=0`);
+    if(!r.ok) return;                 // 服务重启过，内存里已没有这个任务
+    d = await r.json();
+  }catch(e){ return; }
+
+  curTask = tid;
+  const lines = d.logs || [];
+  const box = $('log');
+  box.className = 'logbox';
+  box.innerHTML = lines.map(fmtLog).join('\n') + (lines.length ? '\n' : '');
+  box.scrollTop = box.scrollHeight;
+  logIdx = d.next || lines.length;    // 已渲染全量，后续只取增量
+  $('logCard').classList.remove('collapsed');
+
+  const p = d.progress || {};
+  resetStats(p.total || 0);
+  if(d.started) runStart = d.started * 1000;
+
+  const running = d.status === 'running';
+  setRunning(running);
+  renderProgress(d);
+
+  if(running){
+    startTick();
+    startPoll(tid.startsWith('env-') ? loadEnv : loadHistory);
+    $('runInfo').textContent = tid.startsWith('env-')
+      ? `环境安装任务 · ${tid}（已接续）`
+      : `${p.total || 0} 个 SKU · ${tid}（已接续）`;
+    toast('已接续正在运行的任务', 'info', 2600);
+  }else{
+    stopTick();
+    if(tid.startsWith('env-')) loadEnv();   // 安装类任务：恢复后顺手刷新环境状态
+    const label = d.status === 'done' ? '已完成'
+                : (d.status === 'stopped' ? '已停止' : '出错');
+    setProgress(d.status === 'done' ? 100 : (parseInt($('pctText').textContent) || 0), label);
+    const dur = (d.finished && d.started) ? Math.round(d.finished - d.started)
+              : (d.started ? Math.round(Date.now()/1000 - d.started) : 0);
+    if(dur) $('timeText').textContent = dur + 's';
+    $('runInfo').textContent = `${label} · ${tid}`;
+  }
 }
 
 function fmtLog(l){
@@ -1576,6 +1637,7 @@ window.addEventListener('load', layoutSegs);      // 字体加载后重算指示
 window.addEventListener('resize', layoutSegs);
 loadEnv();
 loadHistory();
+restoreTask();          // 刷新页面后接续后端任务状态（日志 / 进度 / 结果）
 refreshPool();
 setInterval(refreshPool, 5000);
 setTimeout(()=>checkUpdate(true), 2200);   // 打开后自动检查更新
