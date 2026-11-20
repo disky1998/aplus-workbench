@@ -185,9 +185,12 @@ MODULE_SELECTORS = [
 # 标准 A+ 模块图宽通常 970 / 300；高级 A+（Premium）模块图宽 1464
 PREMIUM_WIDTH_HINT = 1464   # 高级 A+（Premium A+）模块设计宽度
 STANDARD_WIDTH_MAX = 970     # 普通 A+ 内容区最大宽度，超过即说明是高级 A+
-# 高级 A+ 的辅助证据：模块 class 里常带 premium 字样
-PREMIUM_CLASS_HINTS = ("premium", "aplus-premium", "premium-aplus")
-# 普通 A+ 的类名证据
+# ⚠️ 只能用「完整类名」判定高级 A+，不能用裸 "premium"：
+#    亚马逊**普通 A+** 的模块类名里也长期带 premium 字样
+#    （实测 class="celwidget aplus-module premium-module-2-fullbackground-image aplus-standard"），
+#    用裸 premium 会把普通 A+ 全判成高级 A+。
+PREMIUM_CLASS_HINTS = ("aplus-premium", "premium-aplus", "aplus_premium")
+# 普通 A+ 的类名证据（页面显式标注 aplus-standard，优先于图宽）
 STANDARD_CLASS_HINTS = ("aplus-standard", "3p-module")
 # ⚠️ 判定高级 A+ 的图宽阈值必须 ≥1400：普通 A+ 的模块图宽实测能到 1000px，
 #    用 970 当阈值会把普通 A+ 误判成高级 A+（B08TSSDWFL 就是这么错的）
@@ -598,14 +601,21 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
             all_images.append(u)
 
     # 2) 是否高级 A+：**类名证据优先**，图宽只作兜底
-    #    （普通 A+ 的模块图宽实测能到 1000px，按图宽判会误判）
+    #    （普通 A+ 的模块图宽实测能到 1000px+，按图宽判会误判）
     widths = [m["image_width_hint"] for m in all_modules if m["image_width_hint"]]
     mx = max(widths) if widths else 0
-    evidence: list = []
+
+    # 判定顺序（严格）：
+    #   1. 模块 class 带 aplus-premium   -> 高级 A+
+    #   2. 模块 class 带 aplus-standard  -> 普通 A+（**显式类名压过图宽**）
+    #   3. 两者都没有                     -> 才退回图宽阈值兜底
+    # 之前少了第 2 步，普通 A+ 只要图片原图够宽（如 2718px）就会被判成高级 A+。
+    premium_reason = ""
     if premium_class_hits:
-        evidence.append(f"高级 A+ 类名：{premium_class_hits[0]}")
-    elif mx >= PREMIUM_WIDTH_STRICT:
-        evidence.append(f"模块图宽 {mx}px ≥ {PREMIUM_WIDTH_STRICT}px（高级 A+ 设计宽度）")
+        premium_reason = f"高级 A+ 类名：{premium_class_hits[0]}"
+    elif not standard_class_hits and mx >= PREMIUM_WIDTH_STRICT:
+        premium_reason = (f"模块图宽 {mx}px ≥ {PREMIUM_WIDTH_STRICT}px"
+                          f"（无类名标记，按图宽兜底判定）")
 
     mode = mode if mode in APLUS_MODES else "auto"
     if mode == "premium":
@@ -615,12 +625,13 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
         is_premium = False
         evidence = ["手动指定：普通 A+"]
     else:
-        is_premium = bool(evidence)
-        if not evidence:
+        is_premium = bool(premium_reason)
+        if premium_reason:
+            evidence = [premium_reason]
+        else:
             kind_hint = f"普通 A+ 类名：{standard_class_hits[0]}" if standard_class_hits \
                 else "无 premium 类名"
-            evidence = [f"{kind_hint}，最大图宽 {mx or '-'}px"
-                        f"（未达 {PREMIUM_WIDTH_STRICT}px）"]
+            evidence = [f"{kind_hint}，最大图宽 {mx or '-'}px"]
 
     # 2b) 移动端会把 1464 的图居中裁剪成 x=332,w=800，此时取 x+w（裁剪右边界）
     #     作为源图宽度下界即可判定：>970 就不可能是普通 A+

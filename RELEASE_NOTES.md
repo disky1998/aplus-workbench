@@ -1,3 +1,40 @@
+## v1.4.5
+
+**修复**：普通 A+ 被误判成「高级 A+」（例如 DZ2396 / B0H7QQHB1Q）。
+
+### 原因
+
+判定高级 A+ 的类名关键词里有一个裸 `premium`：
+
+```python
+PREMIUM_CLASS_HINTS = ("premium", "aplus-premium", "premium-aplus")
+```
+
+但亚马逊**普通 A+** 的模块类名本身就叫
+`celwidget aplus-module premium-module-2-fullbackground-image aplus-standard` ——
+里面带 `premium-module`。于是一命中 `premium` 就直接判成高级 A+。
+
+同时「图宽兜底」也会误伤：普通 A+ 用的可以是 2718px 的原图，只要 ≥1400px
+就被当成高级 A+ 的设计宽度。
+
+### 修复
+
+- 🟢 **只用完整类名判高级 A+**：`aplus-premium` / `premium-aplus` / `aplus_premium`，
+  裸 `premium` 不再算证据
+- 🟢 **`aplus-standard` 显式类名压过图宽**：只要模块标注了普通 A+，图片再宽也不判高级
+- 🟡 **图宽只在「完全没有类名标记」时才兜底**，日志里会写明是兜底判定
+- 🟡 顺带：普通 A+ 不再抓移动端（本来就没有独立移动端版本），任务更快
+
+### 用你那份 20261120-114643 的 30 个 SKU 复核
+
+| 变化 | SKU |
+|---|---|
+| 无 A+ → **有 A+**（v1.4.4 已修） | DZ2396、DZ2394、DZ3211B、DZ3211A、DZ5598、GA7476 |
+| 高级 A+ → **普通 A+**（本次修复） | AC4446、GA7467、AZ0202 |
+| 其余高级 A+ 保持不变 | DZ5597、AC4444、AC4442、DZ5596、GA7483、GA7482、GA7481、GA7480、GA7477、GA7472、GA7446、GA7445、DZ3211B、DZ3211A、DZ5598、GA7476 |
+
+修正后 30 个 SKU：**高级 A+ 16 个 / 普通 A+ 14 个 / 无 A+ 0 个**。
+
 ## v1.4.4
 
 **修复**：部分 ASIN 明明有 A+（含高级 A+），合集里却显示「无 A+」。
