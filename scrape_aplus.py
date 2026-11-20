@@ -72,6 +72,21 @@ EXCLUDE_KEYWORDS = [
 # class 里出现这些也按排除处理（品牌故事的模块 class 带 apm-brand / brand-story）
 EXCLUDE_CLASS_RE = re.compile(r"brand[-_]?story|apm-brand|sustainability[-_]?story", re.I)
 
+# 新版详情页把「普通 A+」和「品牌故事」一起包进同一个外层容器：
+#   <div id="aplusAndBrandStoryContainer">
+#       <div id="aplus_feature_div"> …真正要抓的 A+… </div>
+#       <div id="aplusBrandStory_feature_div"> …品牌故事… </div>
+#   </div>
+# 这个合并外层名字里带 brandstory，如果按关键词排掉，整个 A+ 都会被判成「无 A+」
+# （实测 B0H7QQHB1Q / B0FF42NRSY / B0H4FYXKLG / B0G1LSS1VH / B00O2HYV7K / B0HJZPB5Q7）。
+COMBINED_STORY_PREFIX = "aplusandbrandstory"
+
+
+def is_combined_story_container(node_id: str) -> bool:
+    """是否是「A+ + 品牌故事」的合并外层（它本身不是品牌故事，不能排除）"""
+    low = (node_id or "").lower().replace("-", "").replace("_", "")
+    return low.startswith(COMBINED_STORY_PREFIX)
+
 
 def active_container_ids(include_brand_story: bool = False) -> list:
     ids = list(APLUS_CONTAINER_IDS)
@@ -82,6 +97,8 @@ def active_container_ids(include_brand_story: bool = False) -> list:
 
 def is_excluded(node_id: str, include_brand_story: bool) -> bool:
     """判断兜底命中的容器是否应排除"""
+    if is_combined_story_container(node_id):
+        return False
     low = (node_id or "").lower().replace("-", "").replace("_", "")
     for kw in EXCLUDE_KEYWORDS:
         if kw.replace("_", "") == "brandstory" and include_brand_story:
@@ -116,11 +133,18 @@ def is_brand_module(m, include_brand_story: bool = False) -> bool:
 
 
 def brand_image_set(soup) -> set:
-    """页面里所有品牌故事 / 可持续故事的图片 URL（用于兜底过滤）"""
+    """页面里所有品牌故事 / 可持续故事的图片 URL（用于兜底过滤）
+
+    ⚠ 跳过 #aplusAndBrandStoryContainer 这种「A+ + 品牌故事」的合并外层：
+    它的 id 也含 brandstory，但里面装的是**整页 A+**，把它当品牌故事会把
+    所有 A+ 图片都误杀（后果：A+ 解析出 0 张图）。
+    """
     urls = set()
     for n in soup.select('[id*="brandstory" i], [class*="brandstory" i], '
                          '[id*="brand-story" i], [class*="brand-story" i], '
                          '[id*="sustainabilitystory" i]'):
+        if is_combined_story_container(n.get("id") or ""):
+            continue
         for u in extract_images(n):
             urls.add(u)
     return urls
@@ -483,11 +507,18 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
     # 所以只需要上面的嵌套去重，不要再按名字丢容器。
 
     # 丢掉空容器（有 A+ 时亚马逊仍会输出空的品牌故事占位 div）
+    raw_count = len(containers)
     containers = [
         (name, n) for name, n in containers
         if n.find_all("img") or len(clean_text(n.get_text(" ", strip=True))) >= 20
     ]
     if not containers:
+        # 两种情况要分开写，否则排查时会误判：
+        #   raw_count == 0  -> 页面里连 A+ 容器都没有（多半是亚马逊给的简化版页面）
+        #   raw_count  > 0  -> 容器在但空/被排除（异步没填、或命中了排除规则）
+        note = ("A+ 容器存在但内容为空（可能是页面没渲染完，或被排除规则筛掉），建议重跑该 SKU"
+                if raw_count else
+                "页面上没有找到任何 A+ 容器（亚马逊可能返回了简化版页面），建议重跑该 SKU")
         return {
             "asin": asin, "viewport": viewport, "has_aplus": False,
             "is_premium_candidate": False, "premium_evidence": [],
@@ -495,19 +526,7 @@ def parse_aplus(html: str, asin: str = "", viewport: str = "desktop",
             "aplus_mode": mode if mode in APLUS_MODES else "auto",
             "containers": [], "modules": [],
             "module_count": 0, "image_count": 0, "video_count": 0,
-            "max_image_width": None, "note": "A+ 容器存在但全为空，该 ASIN 没有 A+ 内容",
-            "images": [], "videos": [], "text": "", "html": "",
-        }
-
-    if not containers:
-        return {
-            "asin": asin, "viewport": viewport, "has_aplus": False,
-            "is_premium_candidate": False, "premium_evidence": [],
-            "aplus_kind": "none", "mobile_supported": False,
-            "aplus_mode": mode if mode in APLUS_MODES else "auto",
-            "containers": [], "modules": [],
-            "module_count": 0, "image_count": 0, "video_count": 0,
-            "max_image_width": None, "note": "页面上没有找到任何 A+ 容器",
+            "max_image_width": None, "note": note,
             "images": [], "videos": [], "text": "", "html": "",
         }
 
@@ -1682,13 +1701,27 @@ def build_combined_html(out_root: Path, asins: list, domain: str,
     });
     """
 
+    # 头部站点按**实际链接**统计：用户混贴 .com / .ae 链接时，不能只显示下拉框选的站点，
+    # 否则会误导（曾经出现「显示 amazon.ae、其实抓的是 amazon.com」）。
+    real_doms = []
+    for _l, _a, _d in asins:
+        d = (_d or domain or "").lower()
+        if d and d not in real_doms:
+            real_doms.append(d)
+    if not real_doms:
+        site_txt = f"站点 amazon.{domain}"
+    elif len(real_doms) <= 3:
+        site_txt = "站点 " + " / ".join(f"amazon.{d}" for d in real_doms)
+    else:
+        site_txt = f"站点 {len(real_doms)} 个（按链接）"
+
     doc = (
         "<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
         f"<title>A+ 合集 · {len(asins)} 个 SKU</title>\n"
         f"<style>{CSS_COMBINED}</style></head>\n<body>\n<div class=\"wrap\">\n"
         f"<div class=\"head\"><h1>A+ 内容合集</h1>\n"
-        f"<div class=\"sub\">{len(asins)} 个 SKU · 站点 amazon.{domain} · "
+        f"<div class=\"sub\">{len(asins)} 个 SKU · {site_txt} · "
         f"生成时间 {time.strftime('%Y-%m-%d %H:%M:%S')} · 每节按原网页排版还原</div>\n"
         f"<div class=\"nav\">{''.join(nav)}</div></div>\n"
         f"<table class=\"sum\"><tr><th>ASIN</th><th>类型</th><th>模块</th><th>图片</th>"
