@@ -192,14 +192,39 @@ def _opts_common(o: dict):
     return want, mode
 
 
+def _write_mobile_error(out_root: Path, sku: str, err: str):
+    """把移动端失败原因写进 desktop/content.json，供合集表格显示
+
+    err 为空表示移动端已抓成功（清掉旧记录）。
+    """
+    p = out_root / sku / "desktop" / "content.json"
+    if not p.exists():
+        return
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if err:
+            d["mobile_error"] = err.strip()[:300]
+        else:
+            d.pop("mobile_error", None)
+        p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
-                 factory=None, state_file=None, page=None, browser=None, tag=""):
+                 factory=None, state_file=None, page=None, browser=None, tag="",
+                 mobile_page=None):
     """抓一个 SKU（含 desktop / mobile 决策），返回结果 entry。
 
     页面来源：
-      page    —— 复用预热池里已开好的标签页（桌面端，池化模式）
-      browser —— 池化模式下 CDP 连上的浏览器，用来临时开移动端上下文
-      factory —— 非池化模式（自己新建 context）
+      page        —— 复用预热池里已开好的标签页（桌面端，池化模式）
+      mobile_page —— 本通道常驻的移动端标签页（独立 context，池化模式）
+      browser     —— CDP 连上的浏览器，移动端没有常驻会话时临时开 context
+      factory     —— 非池化模式（自己新建 context）
+
+    注：移动端 context 必须在**使用它的那个连接里**创建。Playwright 通过 CDP
+    新开的 incognito context 对其他连接不可见（实测 worker 只能看到 persistent
+    的 default context），所以不能由预热线程统一建好分发。
     """
     pre = f"    {tag}" if tag else "    "
     vps = ["desktop"] if want == "product" else (
@@ -215,15 +240,24 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
             break
         vp = vps[i]
         data, err = None, None
+
+        # 移动端优先复用本通道的常驻会话（带登录态），没有就临时开
+        mob_page = mobile_page if vp == "mobile" else None
         attempts = int(o.get("retry", 2)) + 1
         for attempt in range(attempts):
             if task.stop_flag:
                 break
             try:
-                pool_page = page if (page is not None and vp == "desktop") else None
-                pool_browser = browser if pool_page is None else None
-                # 池化时登录态由共享 profile 维持，不需要再落盘 storage_state
-                sf = str(state_file) if (state_file and pool_page is None) else None
+                if vp == "mobile" and mob_page is not None:
+                    pool_page, pool_browser = mob_page, None
+                else:
+                    pool_page = page if (page is not None and vp == "desktop") else None
+                    pool_browser = browser if pool_page is None else None
+                # 池化时登录态由共享 profile 维持；只有「非池化的桌面端」
+                # 才需要落盘 storage_state。移动端一律不写，避免把移动
+                # 会话的 cookie 覆盖回桌面登录态文件。
+                sf = (str(state_file) if (state_file and pool_page is None
+                                          and vp == "desktop") else None)
                 data = sa.fetch_one(
                     factory, asin, dom, vp, True, out_root,
                     o.get("downloadImages", False),
@@ -249,9 +283,15 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                         if task.stop_flag:
                             break
                         time.sleep(1)
+
         if data is None:
             entry["note"] = str(err)
             print(f"{pre}[失败] {err}")
+            # 移动端失败要留痕：合集表格里直接显示「未抓 · 被拦截/超时」，
+            # 否则只看到一个「未抓」，无从判断是拦了还是解析失败
+            if vp == "mobile":
+                entry["viewports"][vp] = {"failed": True, "error": str(err or "")}
+                _write_mobile_error(out_root, sku, str(err or ""))
             i += 1
             continue
 
@@ -297,6 +337,8 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
             "maxw": data.get("max_image_width"),
             "skipped": data.get("mobile_skipped", False),
         }
+        if vp == "mobile" and data.get("has_aplus"):
+            _write_mobile_error(out_root, sku, "")      # 抓到了，清掉上次的失败记录
         print(f"{pre}-> {vp}: has={data.get('has_aplus')} "
               f"模块={data.get('module_count')} 图={data.get('image_count')} "
               f"{'高级A+' if data.get('is_premium_candidate') else '普通A+'} "
@@ -304,9 +346,13 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
         print(f"{pre}   判定依据：{'；'.join(data.get('premium_evidence') or []) or '—'}")
 
         # 普通 A+ 没有独立移动端版本 —— 移除 mobile 并把原因写回 content.json，
-        # 否则合集里看不出「移动端为什么缺失」
+        # 否则合集里看不出「移动端为什么缺失」；
+        # 反过来，auto 模式判定为高级 A+ 时即使没勾「桌面+移动」也要补抓移动端，
+        # 否则那一批 SKU 会莫名其妙全是「未抓」。
         want_mobile = (mode == "premium") or (
             mode == "auto" and (data.get("is_premium_candidate") or o.get("forceMobile")))
+        if vp == "desktop" and want_mobile and "mobile" not in vps and want == "all":
+            vps.append("mobile")
         if vp == "desktop" and "mobile" in vps and not want_mobile:
             vps.remove("mobile")
             entry["viewports"]["mobile"] = {"skipped": True}
@@ -449,6 +495,11 @@ def _run_task_pool(task, want, mode, workers):
     done_stat = {"n": 0}
     clock = threading.Lock()
 
+    # 移动端常驻会话额度（预热时登记的，最多这么多路通道自带常驻移动会话）。
+    # 每个通道必须在**自己的 CDP 连接里**建 context —— 实测别的连接看不到
+    # 预热线程新建的 incognito context（browser.contexts 只有 persistent 那个）。
+    mob_n = int(POOL.status().get("mobile_ready") or 0)
+
     def worker(slot):
         try:
             with sync_playwright() as p:
@@ -457,7 +508,32 @@ def _run_task_pool(task, want, mode, workers):
                 ctx = contexts[0] if contexts else browser.new_context()
                 pages = list(ctx.pages)
                 page = pages[slot] if slot < len(pages) else ctx.new_page()
-                print(f"[#{slot+1}] 已接入预热标签页")
+
+                # 本通道的常驻移动会话：建一次、整批复用，继承桌面登录态。
+                # 以前是每个 SKU 现开一个零 cookie 的无痕上下文，被亚马逊当
+                # 新访客拦掉，合集里成批「未抓」。
+                mob_page = None
+                if mob_n and slot < mob_n:
+                    try:
+                        mctx = browser.new_context(
+                            user_agent=sa.UA_MOBILE,
+                            viewport={"width": 390, "height": 844},
+                            device_scale_factor=3, is_mobile=True,
+                            has_touch=True, locale="en-US",
+                            extra_http_headers=sa.LANG_HEADERS)
+                        mctx.add_init_script(sa.STEALTH_JS)
+                        cks = ctx.cookies()
+                        if cks:
+                            mctx.add_cookies(cks)
+                        mob_page = mctx.new_page()
+                        mob_page.goto(f"https://www.amazon.{task.domain}/",
+                                      wait_until="domcontentloaded", timeout=45000)
+                        print(f"[#{slot+1}] 移动端常驻会话已就绪（{len(cks)} 条 cookie）")
+                    except Exception as e:
+                        print(f"[#{slot+1}] [warn] 移动端常驻会话创建失败：{e}")
+                        mob_page = None
+                print(f"[#{slot+1}] 已接入预热标签页"
+                      + ("（移动端常驻 1 路）" if mob_page else ""))
                 while not task.stop_flag:
                     try:
                         sku, asin, dom = job_q.get_nowait()
@@ -471,7 +547,8 @@ def _run_task_pool(task, want, mode, workers):
                           f"  [{want} · 模式 {mode}]")
                     entry = _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                                          page=page, browser=browser,
-                                         tag=f"#{slot+1} ")
+                                         tag=f"#{slot+1} ",
+                                         mobile_page=mob_page)
                     with rlock:
                         results.append(entry)
                         task.results = list(results)
@@ -1101,14 +1178,19 @@ def api_tasks():
 class PreheatRequest(BaseModel):
     size: int = POOL_SIZE
     site: str = "ae"
+    mobileSize: int | None = None      # 移动端常驻会话数，默认 3；0 = 不预热
 
 
 @app.post("/api/pool/preheat")
 def api_pool_preheat(req: PreheatRequest):
     size = max(1, min(int(req.size or POOL_SIZE), 12))
-    if not POOL.preheat_async(size, req.site):
+    mob = None
+    if req.mobileSize is not None:
+        mob = max(0, min(int(req.mobileSize), 6))
+    if not POOL.preheat_async(size, req.site, mob):
         raise HTTPException(409, "正在预热中，请稍候")
-    return {"ok": True, "size": size}
+    return {"ok": True, "size": size,
+            "mobileSize": POOL.status().get("mobile_size")}
 
 
 @app.get("/api/pool/status")

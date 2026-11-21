@@ -307,9 +307,13 @@ def launch_persistent_with_fallback(p, user_data_dir: str, launch_kwargs: dict, 
     kw = dict(launch_kwargs)
     kw["args"] = list(kw.get("args", [])) + SANDBOX_FALLBACK_ARGS
     return p.chromium.launch_persistent_context(user_data_dir, **kw), True
+# 移动端 UA 必须与真实内核一致（Chromium）。原先用 iPhone/Safari 的 UA，
+# 但实际跑的是 Chromium —— UA 说 Safari、引擎却是 Chrome，这种矛盾本身就是
+# 风控特征，被拦概率明显偏高。A+ 内容在移动端与桌面端是同一套模块，
+# 换 UA 不影响解析结果，只影响被拦概率。
 UA_MOBILE = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
-    "Version/17.5 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Mobile Safari/537.36"
 )
 
 
@@ -1306,7 +1310,20 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
                         user_agent=UA_MOBILE,
                         viewport={"width": 390, "height": 844},
                         device_scale_factor=3, is_mobile=True, has_touch=True,
-                        locale="en-US")
+                        locale="en-US", extra_http_headers=LANG_HEADERS)
+                    # 关键：CDP 上 new_context() 是全新的无痕上下文，**不带**持久
+                    # profile 的登录态。不注入 cookie 的话移动端就是「零 cookie 的
+                    # 新访客」，亚马逊大概率回 Robot Check / 简化页 → A+ 解析为空。
+                    # 历史现象：高级 A+ 合集里移动端一批「未抓」，且越靠后的 SKU
+                    # 越容易被拦（同一 IP 反复出现全新移动会话，风控逐级抬升）。
+                    try:
+                        base_ctx = browser.contexts[0] if browser.contexts else None
+                        if base_ctx is not None:
+                            cks = base_ctx.cookies()
+                            if cks:
+                                ctx.add_cookies(cks)
+                    except Exception as e:
+                        print(f"    [warn] 移动端 cookie 注入失败（{str(e)[:70]}）")
                 else:
                     ctx = browser.new_context(
                         user_agent=random.choice(UA_DESKTOP_POOL),
@@ -1555,6 +1572,12 @@ def _meta(asin_dir: Path, vp: str) -> dict:
         return {}
 
 
+def _attr(s: str) -> str:
+    """HTML 属性安全化（title 里可能带异常信息里的引号/尖括号）"""
+    return (str(s or "").replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
 CSS_COMBINED = """
 *{box-sizing:border-box}
 body{margin:0;background:#f2f0ec;color:#2c2c2a;
@@ -1684,7 +1707,22 @@ def build_combined_html(out_root: Path, asins: list, domain: str,
         if any(v == "mobile" for v, _, _, _ in vp_parts):
             mob = '<span class="mob ok">已抓</span>'
         elif kind == "premium":
-            mob = '<span class="mob no">未抓</span>'
+            # 移动端缺失必须说明原因，否则只看到「未抓」无从判断是拦了还是解析失败
+            merr = (dm.get("mobile_error") or "").strip()
+            short = ""
+            if merr:
+                low = merr.lower()
+                if "验证码" in merr or "robot" in low or "captcha" in low:
+                    short = "被拦截"
+                elif "timeout" in low or "超时" in merr:
+                    short = "超时"
+                elif "拦截" in merr or "blocked" in low:
+                    short = "被拦截"
+                else:
+                    short = "失败"
+            label_m = f"未抓 · {short}" if short else "未抓"
+            tip = merr.splitlines()[0][:160] if merr else "移动端没有产出内容，建议重跑该 SKU"
+            mob = (f'<span class="mob no" title="{_attr(tip)}">{label_m}</span>')
         else:
             mob = '<span class="mob dim">无独立版本</span>'
         rows.append(

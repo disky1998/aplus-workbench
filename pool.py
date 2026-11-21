@@ -32,6 +32,10 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SIZE = 6
+# 移动端常驻会话数。移动端必须用独立 BrowserContext（UA / 视口 / is_mobile 是
+# context 级设置，改不了单个标签页），所以额外常驻 3 个 context 复用，
+# 不再每个 SKU 现开一个无 cookie 的无痕上下文。
+DEFAULT_MOBILE_SIZE = 3
 
 # 沙箱兼容参数：部分机器（安全软件 / AppLocker / WDAC 拦截「用户可写目录」下的进程）
 # 下 Chrome 的沙箱无法初始化，表现为浏览器进程启动即死、调试端口永远不监听
@@ -86,6 +90,8 @@ class BrowserPool:
         self.ready_at = 0.0
         self.site = "ae"
         self.compat = False          # 是否因沙箱无法初始化而启用了 --no-sandbox
+        self.mobile_size = DEFAULT_MOBILE_SIZE   # 移动端常驻会话额度（按通道分配）
+        self.mobile_ready = 0                    # 本次预热实际给出的额度
 
     # ------------------------------------------------------------- 工具
     @property
@@ -123,11 +129,18 @@ class BrowserPool:
                 "steps": self.steps[-14:],
                 "profile": str(self.profile_dir),
                 "compat": bool(self.compat),
+                "mobile_size": self.mobile_size,
+                "mobile_ready": self.mobile_ready,
             }
 
     # ------------------------------------------------------------- 预热
-    def preheat_async(self, size: int = DEFAULT_SIZE, site: str = "ae") -> bool:
-        """后台预热，立刻返回；进度看 status()"""
+    def preheat_async(self, size: int = DEFAULT_SIZE, site: str = "ae",
+                      mobile_size: int | None = None) -> bool:
+        """后台预热，立刻返回；进度看 status()
+
+        mobile_size —— 额外常驻的移动端会话数（独立 context），默认 3。
+                       传 0 表示不预热移动端，抓取时退回「临时开无痕上下文」。
+        """
         with self._lock:
             if self.state == "starting":
                 return False
@@ -137,6 +150,9 @@ class BrowserPool:
             self.compat = False
             self.size = max(1, min(int(size or DEFAULT_SIZE), 12))
             self.site = site or "ae"
+            self.mobile_size = max(0, min(
+                int(DEFAULT_MOBILE_SIZE if mobile_size is None else mobile_size), 6))
+            self.mobile_ready = 0
             self.message = "准备中…"
         threading.Thread(target=self._do_preheat, daemon=True).start()
         return True
@@ -299,13 +315,24 @@ class BrowserPool:
                     pages[0].bring_to_front()
                 except Exception:
                     pass
+
+                # ---- 移动端常驻会话的额度 ----
+                # 实测：Playwright 通过 CDP 新开的 incognito context，**别的 CDP
+                # 连接看不到**（browser.contexts 只有 persistent 那个），所以不能
+                # 在预热线程里建好给 worker 用。这里只登记额度，由每个 worker 在
+                # 自己的连接里建 1 个常驻移动会话，整批复用（详见 webapp）。
+                mob_real = min(self.mobile_size, self.size)
+                if mob_real:
+                    self.step(f"移动端常驻额度 {mob_real} 路（抓取时按通道创建）")
                 real = len(ctx.pages)
             self.step(f"预热完成：{real} 个标签页，共享同一份登录态")
 
             with self._lock:
                 self.state = "ready"
                 self.ready_at = time.time()
-                self.message = f"已就绪 · {real} 路并行"
+                self.mobile_ready = mob_real
+                self.message = (f"已就绪 · {real} 路并行"
+                                + (f" · 移动端 {mob_real} 路常驻" if mob_real else ""))
             self.step("可以在任意标签页里登录 / 过验证码，然后点「开始抓取」")
         except Exception as e:
             with self._lock:
@@ -364,5 +391,6 @@ class BrowserPool:
         with self._lock:
             self.state = "idle"
             self.size = 0
+            self.mobile_ready = 0
             self.message = "未预热"
         self.step("已关闭")

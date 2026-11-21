@@ -1374,7 +1374,7 @@ function applyPool(){
   const dot = $('poolDot');
   dot.className = 'dot ' + (st.ready ? 'on' : (st.state && st.state !== 'idle' ? 'warn' : ''));
   let msg;
-  if(st.ready) msg = `已就绪 · ${st.size} 路并行（可在浏览器里先登录）`;
+  if(st.ready) msg = `已就绪 · ${st.size} 路并行` + (st.mobile_ready ? ` · 移动端 ${st.mobile_ready} 路常驻` : '') + `（可在浏览器里先登录）`;
   else if(st.state === 'starting') msg = st.message || '预热中…';
   else if(st.state === 'error') msg = '预热失败：' + (st.error || '');
   else if(st.state === 'closing') msg = '正在关闭…';
@@ -1426,7 +1426,7 @@ $('btnPreheat').onclick = async ()=>{
     const d = await r.json();
     if(!r.ok){ toast(d.detail || '预热失败', 'err'); return; }
     $('poolSteps').classList.remove('open');
-    toast(`正在预热 ${d.size} 个标签页，浏览器窗口马上弹出…`, 'info', 5000);
+    toast(`正在预热 ${d.size} 个标签页` + (d.mobileSize ? ` + ${d.mobileSize} 个移动端会话` : '') + `，浏览器窗口马上弹出…`, 'info', 5000);
     startPoolPoll();
   }catch(e){ toast(e.message, 'err'); }
 };
