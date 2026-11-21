@@ -211,20 +211,51 @@ def _write_mobile_error(out_root: Path, sku: str, err: str):
         pass
 
 
+def _collect_mobile_pages(pages, desktop_n: int, mobile_n: int) -> list:
+    """从预热好的标签页里挑出移动端的几个。
+
+    预热时把它们开在 `?language=en_US&_aplus_mobile=1`，先用这个标记认；
+    认不全（例如某个通道启动晚、标签页已经被别人导航过）就按位置补 ——
+    移动端标签页是在桌面端之后创建的，`ctx.pages` 的顺序与之基本一致。
+    """
+    mob = []
+    for pg in pages:
+        try:
+            if "_aplus_mobile=1" in (pg.url or ""):
+                mob.append(pg)
+        except Exception:
+            continue
+    if len(mob) < mobile_n and desktop_n >= 0:
+        for pg in pages[desktop_n:desktop_n + mobile_n]:
+            if pg not in mob:
+                mob.append(pg)
+    return mob[:mobile_n]
+
+
+def _acquire_mobile(slot: int, locks) -> int:
+    """借一个空闲的移动端标签页锁：优先按 slot 取，全忙就阻塞等最靠前的一个"""
+    n = len(locks)
+    start = slot % n
+    for k in range(n):
+        i = (start + k) % n
+        if locks[i].acquire(blocking=False):
+            return i
+    i = start
+    locks[i].acquire()
+    return i
+
+
 def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                  factory=None, state_file=None, page=None, browser=None, tag="",
-                 mobile_page=None):
+                 mobile_pages=None, mobile_locks=None, slot=0):
     """抓一个 SKU（含 desktop / mobile 决策），返回结果 entry。
 
     页面来源：
-      page        —— 复用预热池里已开好的标签页（桌面端，池化模式）
-      mobile_page —— 本通道常驻的移动端标签页（独立 context，池化模式）
-      browser     —— CDP 连上的浏览器，移动端没有常驻会话时临时开 context
-      factory     —— 非池化模式（自己新建 context）
-
-    注：移动端 context 必须在**使用它的那个连接里**创建。Playwright 通过 CDP
-    新开的 incognito context 对其他连接不可见（实测 worker 只能看到 persistent
-    的 default context），所以不能由预热线程统一建好分发。
+      page         —— 复用预热池里已开好的桌面标签页（池化模式）
+      mobile_pages —— 预热时开好的移动端标签页（**同一个持久 context**，
+                      窗口里可见、与桌面端共享登录态；逐个借出，WAL 式加锁）
+      browser      —— CDP 连上的浏览器，移动端没有可用标签页时临时开 context
+      factory      —— 非池化模式（自己新建 context）
     """
     pre = f"    {tag}" if tag else "    "
     vps = ["desktop"] if want == "product" else (
@@ -241,8 +272,23 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
         vp = vps[i]
         data, err = None, None
 
-        # 移动端优先复用本通道的常驻会话（带登录态），没有就临时开
-        mob_page = mobile_page if vp == "mobile" else None
+        # 移动端：从预热好的移动标签页池里借一个（同一 context，带登录态）。
+        # UA / 视口覆盖绑定在**当前这条连接**上，所以每次借出都要重设一次。
+        mob_page, mob_idx = None, None
+        if vp == "mobile" and mobile_pages and mobile_locks:
+            mob_idx = _acquire_mobile(slot, mobile_locks)
+            mob_page = mobile_pages[mob_idx % len(mobile_pages)]
+            sa.apply_mobile_emulation(mob_page)
+
+        def _drop_mobile():
+            nonlocal mob_idx
+            if mob_idx is not None:
+                try:
+                    mobile_locks[mob_idx].release()
+                except Exception:
+                    pass
+                mob_idx = None
+
         attempts = int(o.get("retry", 2)) + 1
         for attempt in range(attempts):
             if task.stop_flag:
@@ -292,6 +338,7 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
             if vp == "mobile":
                 entry["viewports"][vp] = {"failed": True, "error": str(err or "")}
                 _write_mobile_error(out_root, sku, str(err or ""))
+            _drop_mobile()
             i += 1
             continue
 
@@ -327,6 +374,7 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
             if not entry["ok"]:
                 entry["note"] = "商品信息不全：" + \
                     "、".join(prodmod.missing_fields(prod or {}))
+            _drop_mobile()
             i += 1
             continue
 
@@ -367,6 +415,7 @@ def _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
             except Exception:
                 pass
             print(f"{pre}[跳过移动端] {note}")
+        _drop_mobile()
         i += 1
 
     return entry
@@ -495,10 +544,12 @@ def _run_task_pool(task, want, mode, workers):
     done_stat = {"n": 0}
     clock = threading.Lock()
 
-    # 移动端常驻会话额度（预热时登记的，最多这么多路通道自带常驻移动会话）。
-    # 每个通道必须在**自己的 CDP 连接里**建 context —— 实测别的连接看不到
-    # 预热线程新建的 incognito context（browser.contexts 只有 persistent 那个）。
+    # 移动端标签页：预热时就在**同一个持久 context** 里开好了（窗口里能看到）。
+    # 抓取时按需借出并加锁 —— 同一个标签页同一时刻只能被一个线程导航，
+    # 否则 Playwright 的并发导航会串页。
     mob_n = int(POOL.status().get("mobile_ready") or 0)
+    desk_n = int(POOL.status().get("size") or workers)
+    MOB_LOCKS = [threading.Lock() for _ in range(mob_n)]
 
     def worker(slot):
         try:
@@ -507,33 +558,17 @@ def _run_task_pool(task, want, mode, workers):
                 contexts = browser.contexts
                 ctx = contexts[0] if contexts else browser.new_context()
                 pages = list(ctx.pages)
-                page = pages[slot] if slot < len(pages) else ctx.new_page()
+                mob_pages = _collect_mobile_pages(pages, desk_n, mob_n)
+                # 桌面通道只从「非移动端」标签页里取，避免桌面标签页没开够时
+                # 抢到一个 390 宽的移动端标签页去抓桌面内容
+                desk_pages = [pg for pg in pages if pg not in mob_pages]
+                page = desk_pages[slot] if slot < len(desk_pages) else ctx.new_page()
 
-                # 本通道的常驻移动会话：建一次、整批复用，继承桌面登录态。
-                # 以前是每个 SKU 现开一个零 cookie 的无痕上下文，被亚马逊当
-                # 新访客拦掉，合集里成批「未抓」。
-                mob_page = None
-                if mob_n and slot < mob_n:
-                    try:
-                        mctx = browser.new_context(
-                            user_agent=sa.UA_MOBILE,
-                            viewport={"width": 390, "height": 844},
-                            device_scale_factor=3, is_mobile=True,
-                            has_touch=True, locale="en-US",
-                            extra_http_headers=sa.LANG_HEADERS)
-                        mctx.add_init_script(sa.STEALTH_JS)
-                        cks = ctx.cookies()
-                        if cks:
-                            mctx.add_cookies(cks)
-                        mob_page = mctx.new_page()
-                        mob_page.goto(f"https://www.amazon.{task.domain}/",
-                                      wait_until="domcontentloaded", timeout=45000)
-                        print(f"[#{slot+1}] 移动端常驻会话已就绪（{len(cks)} 条 cookie）")
-                    except Exception as e:
-                        print(f"[#{slot+1}] [warn] 移动端常驻会话创建失败：{e}")
-                        mob_page = None
+                if mob_n and len(mob_pages) < mob_n:
+                    print(f"[#{slot+1}] [warn] 只找到 {len(mob_pages)}/{mob_n} 个"
+                          f"移动端标签页，缺的会在抓取时临时开上下文")
                 print(f"[#{slot+1}] 已接入预热标签页"
-                      + ("（移动端常驻 1 路）" if mob_page else ""))
+                      + (f"（移动端可借 {len(mob_pages)} 路）" if mob_pages else ""))
                 while not task.stop_flag:
                     try:
                         sku, asin, dom = job_q.get_nowait()
@@ -548,7 +583,8 @@ def _run_task_pool(task, want, mode, workers):
                     entry = _scrape_item(task, o, out_root, sku, asin, dom, want, mode,
                                          page=page, browser=browser,
                                          tag=f"#{slot+1} ",
-                                         mobile_page=mob_page)
+                                         mobile_pages=mob_pages, mobile_locks=MOB_LOCKS,
+                                         slot=slot)
                     with rlock:
                         results.append(entry)
                         task.results = list(results)

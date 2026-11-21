@@ -316,6 +316,58 @@ UA_MOBILE = (
     "Chrome/131.0.0.0 Mobile Safari/537.36"
 )
 
+MOBILE_VIEWPORT = {"width": 390, "height": 844}
+MOBILE_DPR = 3
+
+
+_EMU_SESSIONS: dict = {}      # id(page) -> (page, cdp_session)，按标签页复用
+
+
+def _emu_session(page):
+    ent = _EMU_SESSIONS.get(id(page))
+    if ent is not None and ent[0] is page:
+        return ent[1]
+    s = page.context.new_cdp_session(page)
+    _EMU_SESSIONS[id(page)] = (page, s)
+    return s
+
+
+def apply_mobile_emulation(page, log=None):
+    """把**单个标签页**模拟成移动端（UA / 视口 / 触摸），不影响同 context 的其它标签页。
+
+    为什么不直接 `browser.new_context(is_mobile=True)`：那样会开一个独立的 incognito
+    上下文，① 预热时看不到（不在浏览器窗口里）② 不带持久 profile 的登录态
+    ③ 别的 CDP 连接也访问不到。改用 CDP 的 Emulation 域做**逐标签页覆盖**，
+    标签页仍是持久 context 里的普通标签页 —— 登录态共享、窗口里看得见。
+
+    覆盖绑定在当前 CDP 连接上：连接断开后浏览器会自动回到桌面形态，重连需重新调用。
+    """
+    say = log or (lambda *a, **k: None)
+    for attempt in (1, 2):
+        try:
+            cdp = _emu_session(page)
+            cdp.send("Emulation.setUserAgentOverride", {
+                "userAgent": UA_MOBILE,
+                "acceptLanguage": "en-US,en;q=0.9",
+                "platform": "Linux armv8l",
+            })
+            cdp.send("Emulation.setDeviceMetricsOverride", {
+                "width": MOBILE_VIEWPORT["width"],
+                "height": MOBILE_VIEWPORT["height"],
+                "deviceScaleFactor": MOBILE_DPR,
+                "mobile": True,
+                "screenWidth": MOBILE_VIEWPORT["width"],
+                "screenHeight": MOBILE_VIEWPORT["height"],
+            })
+            cdp.send("Emulation.setTouchEmulationEnabled",
+                     {"enabled": True, "maxTouchPoints": 5})
+            return cdp
+        except Exception as e:
+            _EMU_SESSIONS.pop(id(page), None)      # 会话已失效，重建一次
+            if attempt == 2:
+                say(f"[warn] 移动端仿真设置失败（{str(e)[:80]}），该标签页按桌面渲染")
+                return None
+
 
 # ---------------------------------------------------------------- 语言锁定（英文）
 # 亚马逊按「访客语言偏好」返回不同语言版本的商品标题 / 卖点 / A+ 文案。中东站
@@ -1355,8 +1407,10 @@ def fetch_one(browser_ctx_factory, asin: str, domain: str, viewport: str,
             navigate(page, url, scroll=scroll,
                      include_brand_story=include_brand_story,
                      wait_aplus=(want != "product"))
-        # 持久化上下文 / 池化标签页的 viewport 不固定，移动端要单独纠正
-        if viewport == "mobile":
+        # 持久化上下文 / 池化标签页的 viewport 不固定，移动端要单独纠正。
+        # 池化标签页（own=False）已经由 apply_mobile_emulation 设过 390×844，
+        # 这里再调 set_viewport_size 反而会把 mobile 覆盖标志冲掉，跳过。
+        if viewport == "mobile" and own:
             try:
                 page.set_viewport_size({"width": 390, "height": 844})
             except Exception:

@@ -32,9 +32,9 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SIZE = 6
-# 移动端常驻会话数。移动端必须用独立 BrowserContext（UA / 视口 / is_mobile 是
-# context 级设置，改不了单个标签页），所以额外常驻 3 个 context 复用，
-# 不再每个 SKU 现开一个无 cookie 的无痕上下文。
+# 移动端标签页数。UA / 视口 / 触摸是**逐标签页**用 CDP Emulation 覆盖的
+# （见 scrape_aplus.apply_mobile_emulation），所以它们仍是持久 context 里的
+# 普通标签页 —— 预热时能在浏览器窗口里看到，且和桌面端共享同一份登录态。
 DEFAULT_MOBILE_SIZE = 3
 
 # 沙箱兼容参数：部分机器（安全软件 / AppLocker / WDAC 拦截「用户可写目录」下的进程）
@@ -90,8 +90,11 @@ class BrowserPool:
         self.ready_at = 0.0
         self.site = "ae"
         self.compat = False          # 是否因沙箱无法初始化而启用了 --no-sandbox
-        self.mobile_size = DEFAULT_MOBILE_SIZE   # 移动端常驻会话额度（按通道分配）
-        self.mobile_ready = 0                    # 本次预热实际给出的额度
+        self.mobile_size = DEFAULT_MOBILE_SIZE   # 移动端标签页数（按通道分配）
+        self.mobile_ready = 0                    # 本次预热实际开出来的移动端标签页数
+        # 移动端的 UA/视口覆盖绑定在预热这条 CDP 连接上：连接一断，浏览器就会
+        # 退回桌面渲染。所以预热完成后要**一直持有**这条连接，用事件挂住线程。
+        self._hold = threading.Event()
 
     # ------------------------------------------------------------- 工具
     @property
@@ -138,7 +141,7 @@ class BrowserPool:
                       mobile_size: int | None = None) -> bool:
         """后台预热，立刻返回；进度看 status()
 
-        mobile_size —— 额外常驻的移动端会话数（独立 context），默认 3。
+        mobile_size —— 额外开的移动端标签页数，默认 3。
                        传 0 表示不预热移动端，抓取时退回「临时开无痕上下文」。
         """
         with self._lock:
@@ -153,6 +156,7 @@ class BrowserPool:
             self.mobile_size = max(0, min(
                 int(DEFAULT_MOBILE_SIZE if mobile_size is None else mobile_size), 6))
             self.mobile_ready = 0
+            self._hold = threading.Event()
             self.message = "准备中…"
         threading.Thread(target=self._do_preheat, daemon=True).start()
         return True
@@ -253,6 +257,7 @@ class BrowserPool:
         return browser
 
     def _do_preheat(self):
+        hold = self._hold      # 本次预热专属的存活信号；重新预热时会被替换
         try:
             self.step("关闭上一次的浏览器实例")
             self._kill()
@@ -316,25 +321,64 @@ class BrowserPool:
                 except Exception:
                     pass
 
-                # ---- 移动端常驻会话的额度 ----
-                # 实测：Playwright 通过 CDP 新开的 incognito context，**别的 CDP
-                # 连接看不到**（browser.contexts 只有 persistent 那个），所以不能
-                # 在预热线程里建好给 worker 用。这里只登记额度，由每个 worker 在
-                # 自己的连接里建 1 个常驻移动会话，整批复用（详见 webapp）。
-                mob_real = min(self.mobile_size, self.size)
-                if mob_real:
-                    self.step(f"移动端常驻额度 {mob_real} 路（抓取时按通道创建）")
+                # ---- 移动端：在同一个持久 context 里多开几个可见标签页 ----
+                # 以前用 browser.new_context(is_mobile=True)：那是独立的无痕上下文，
+                # 浏览器窗口里看不见、也不带 profile 登录态，预热对用户没有任何
+                # 可见反馈。改为逐标签页 CDP 仿真（UA / 390×844 / 触摸），标签页仍是
+                # 普通标签页：窗口里看得到、能手动登录，且与桌面端共享 cookie。
+                mob_pages = []
+                mobile_n = min(self.mobile_size, self.size)
+                for i in range(mobile_n):
+                    try:
+                        pg = ctx.new_page()
+                        # URL 里的 _aplus_mobile=1 用于预热后识别是哪几个标签页
+                        # （window.name 跨站导航会被浏览器清掉，不可靠）
+                        mp = (f"https://www.amazon.{self.site}/"
+                              f"?language=en_US&_aplus_mobile=1")
+                        try:
+                            from scrape_aplus import apply_mobile_emulation
+                            apply_mobile_emulation(pg)
+                        except Exception as e:
+                            self.step(f"移动端仿真设置失败（{str(e)[:50]}），"
+                                      f"该标签页按桌面打开", False)
+                        pg.goto(mp, wait_until="domcontentloaded", timeout=45000)
+                        mob_pages.append(pg)
+                        self.step(f"预热移动端标签页 {i + 1}/{mobile_n}"
+                                  f"（390×844 · 共享登录态）")
+                    except Exception as e:
+                        self.step(f"移动端标签页 {i + 1} 打开失败（{str(e)[:60]}），"
+                                  f"该路抓取时退回临时上下文", False)
+                    time.sleep(0.5)
+                mob_real = len(mob_pages)
+                try:
+                    pages[0].bring_to_front()
+                except Exception:
+                    pass
                 real = len(ctx.pages)
-            self.step(f"预热完成：{real} 个标签页，共享同一份登录态")
+            self.step(f"预热完成：{self.size} 个桌面标签页"
+                      + (f" + {mob_real} 个移动端标签页" if mob_real else "")
+                      + "，共享同一份登录态")
 
             with self._lock:
                 self.state = "ready"
                 self.ready_at = time.time()
                 self.mobile_ready = mob_real
-                self.message = (f"已就绪 · {real} 路并行"
-                                + (f" · 移动端 {mob_real} 路常驻" if mob_real else ""))
+                self.message = (f"已就绪 · {self.size} 路并行"
+                                + (f" · 移动端 {mob_real} 路" if mob_real else ""))
             self.step("可以在任意标签页里登录 / 过验证码，然后点「开始抓取」")
+
+            # 移动端的 UA / 视口覆盖绑定在**这条连接**上，连接一断浏览器就会
+            # 退回桌面渲染 —— 所以预热完成后不能退出 with，用事件挂住。
+            # 重新预热 / 关闭时 self._hold 会被替换或 set，这里据此退出。
+            my_hold = hold
+            while not my_hold.wait(1.0):
+                if my_hold is not self._hold or not self._alive():
+                    break
         except Exception as e:
+            # 上一次预热留下的线程（持有的是旧 event）失败是正常的：新预热已经
+            # 把它连着浏览器一起替换掉了，不要覆盖新状态。
+            if hold is not self._hold:
+                return
             with self._lock:
                 self.state = "error"
                 self.error = str(e)
@@ -386,6 +430,7 @@ class BrowserPool:
     def close(self):
         with self._lock:
             self.state = "closing"
+            self._hold.set()          # 放行预热线程，让它退出 with 释放 Playwright
         self.step("正在关闭浏览器")
         self._kill()
         with self._lock:
