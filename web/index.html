@@ -700,6 +700,8 @@ amazon.com/dp/B0F3VQCPXZ"></textarea>
               <div class="pool-act">
                 <button class="btn sm" id="btnPreheat">预热浏览器（6）</button>
                 <button class="btn ghost sm" id="btnPoolClose">关闭浏览器</button>
+                <button class="btn ghost sm" id="btnRepair" title="自动清理残留进程、重建损坏的配置目录、切换可用内核；缺内核时自动下载">一键修复</button>
+                <button class="btn ghost sm" id="btnDiagnose" title="预热失败时把诊断信息复制出来发给技术支持">复制诊断</button>
                 <label class="sw" title="不预热就直接串行抓取（慢，且更容易被拦）">
                   <input type="checkbox" id="skipPool"><span class="track"></span>
                   <span class="txt" style="font-size:11.5px">跳过预热</span></label>
@@ -1374,12 +1376,14 @@ function applyPool(){
   const dot = $('poolDot');
   dot.className = 'dot ' + (st.ready ? 'on' : (st.state && st.state !== 'idle' ? 'warn' : ''));
   let msg;
-  if(st.ready) msg = `已就绪 · ${st.size} 路并行` + (st.mobile_ready ? ` · 移动端 ${st.mobile_ready} 个标签页` : '') + `（可在浏览器里先登录）`;
+  if(st.ready) msg = `已就绪 · ${st.size} 路并行` + (st.mobile_ready ? ` · 移动端 ${st.mobile_ready} 个标签页` : '') + (st.kernel ? ` · ${st.kernel}` : '') + `（可在浏览器里先登录）`;
   else if(st.state === 'starting') msg = st.message || '预热中…';
-  else if(st.state === 'error') msg = '预热失败：' + (st.error || '');
+  else if(st.state === 'error') msg = '预热失败：' + String(st.error || '').split('\n')[0];
   else if(st.state === 'closing') msg = '正在关闭…';
+  else if(st.state === 'ready') msg = '浏览器已被关闭，请重新预热（或点「一键修复」）';
   else msg = '未预热 · 不预热将单线程抓取（慢且更易被拦）';
   $('poolMsg').textContent = msg;
+  $('poolMsg').title = st.state === 'error' ? String(st.error || '') : '';
 
   const steps = st.steps || [];
   const box = $('poolSteps');
@@ -1411,14 +1415,14 @@ function startPoolPoll(){
       toast(`预热完成：${st.size} 个标签页共享同一份登录态，可以开始了`, 'ok', 5600);
     }else if(st.state === 'error'){
       clearInterval(poolPoll);
-      toast('预热失败：' + (st.error || ''), 'err', 7000);
+      toast('预热失败：' + String(st.error || '').split('\n')[0] + '\n点「一键修复」可自动排查并重试', 'err', 9000);
     }else if(st.state === 'idle'){
       clearInterval(poolPoll);
     }
   }, 1200);
 }
 
-$('btnPreheat').onclick = async ()=>{
+async function doPreheat(){
   try{
     const r = await fetch('/api/pool/preheat', {method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1429,12 +1433,86 @@ $('btnPreheat').onclick = async ()=>{
     toast(`正在预热 ${d.size} 个标签页` + (d.mobileSize ? ` + ${d.mobileSize} 个移动端标签页（窗口里能直接看到）` : '') + `，浏览器窗口马上弹出…`, 'info', 5000);
     startPoolPoll();
   }catch(e){ toast(e.message, 'err'); }
+}
+
+$('btnPreheat').onclick = ()=> doPreheat();
+
+/* 一键修复：清残留进程 / 清锁 / 体检配置目录与内核；缺内核自动下载后重新预热 */
+$('btnRepair').onclick = async ()=>{
+  const btn = $('btnRepair');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '修复中…';
+  const restore = ()=>{ btn.disabled = false; btn.textContent = old; };
+  try{
+    const d = await (await fetch('/api/pool/repair', {method:'POST'})).json();
+    if(d.need_install && d.task_id){
+      toast('没有可用浏览器内核，开始自动下载（约 150 MB）…', 'info', 6000);
+      curTask = d.task_id; logIdx = 0;
+      $('log').className = 'logbox idle'; $('log').innerHTML = '';
+      $('logCard').classList.remove('collapsed');
+      startPoll(()=>{ restore(); loadEnv(); doPreheat(); });
+      return;
+    }
+    await refreshPool();
+    if(d.problems && d.problems.length){
+      toast('修复完成，仍有提醒：' + d.problems.join('；'), 'warn', 8000);
+    }
+    if(d.ok){
+      toast('修复完成，正在重新预热…', 'ok', 3200);
+      setTimeout(doPreheat, 500);
+    }else{
+      toast('未能自动修复，请点「复制诊断」把信息发出来', 'err', 7000);
+    }
+  }catch(e){
+    toast('修复失败：' + e.message, 'err', 5000);
+  }finally{
+    restore();
+  }
 };
 
 $('btnPoolClose').onclick = async ()=>{
   await fetch('/api/pool/close', {method:'POST'});
   await refreshPool();
   toast('已关闭预热浏览器', 'info', 2200);
+};
+
+$('btnDiagnose').onclick = async ()=>{
+  let d;
+  try{
+    d = await (await fetch('/api/pool/diagnose')).json();
+  }catch(e){
+    toast('取诊断信息失败：' + e.message, 'err'); return;
+  }
+  const lines = [];
+  lines.push('===== 亚马逊采集工作台 诊断 =====');
+  lines.push(`版本：${d.version || ''}　打包运行：${d.frozen ? '是' : '否'}　平台：${d.platform || ''}`);
+  lines.push(`应用目录：${d.app_dir || ''}`);
+  lines.push('');
+  lines.push(`预热状态：${d.state || ''}　内核：${d.kernel || '(未用上)'}　兼容模式：${d.compat ? '是' : '否'}`);
+  lines.push(`浏览器版本：${d.browser_version || '(未知)'}`);
+  lines.push(`配置目录：${d.profile || ''}`);
+  lines.push(`配置根目录：${d.profile_root || ''}`);
+  if(d.error) lines.push(`错误：${d.error}`);
+  if(d.stderr) lines.push(`浏览器 stderr：${d.stderr}`);
+  lines.push('');
+  lines.push('-- 可用内核 --');
+  (d.kernels || []).forEach(k => lines.push(`  ${k.label}: ${k.path}`));
+  if(d.chrome) lines.push(`系统 Chrome：${d.chrome.version || '未检测到'} ${d.chrome.path || ''}`);
+  if(d.playwright) lines.push(`Playwright 内核：${(d.playwright.installed || []).join(', ') || '未安装'} @ ${d.playwright.root || ''}`);
+  lines.push('');
+  lines.push(`代理环境变量：${Object.keys(d.env || {}).length ? JSON.stringify(d.env) : '(无)'}`);
+  lines.push('');
+  lines.push('-- 最近步骤 --');
+  (d.steps || []).forEach(s => lines.push(`  ${s.ts} ${s.ok ? '✓' : '×'} ${s.text}`));
+  if(d.debug_file) lines.push(`\n诊断文件：${d.debug_file}`);
+  const txt = lines.join('\n');
+  try{
+    await navigator.clipboard.writeText(txt);
+    toast('诊断信息已复制，直接粘贴发给技术支持', 'ok', 4200);
+  }catch(e){
+    console.log(txt);
+    toast('复制失败，诊断信息已打印到控制台', 'err', 4200);
+  }
 };
 
 $('skipPool').onchange = ()=>{ applyPool(); };

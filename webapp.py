@@ -1071,9 +1071,8 @@ def playwright_cli_cmd(*args):
     return [sys.executable, "-m", "playwright", *args]
 
 
-@app.post("/api/env/install-playwright")
-def api_install_playwright():
-    """一键安装 Playwright 自带的 chromium"""
+def _start_playwright_install() -> str:
+    """启动内核安装任务，返回 task_id（供环境面板与一键修复共用）"""
     tid = f"env-{int(time.time())}"
     t = Task(tid, [], "", {})
     t.status = "running"
@@ -1098,6 +1097,12 @@ def api_install_playwright():
                     t.log(line.rstrip())
                 pr.wait()
                 t.log(f"[exit] {pr.returncode}")
+            # 装完把新的内核路径同步给池子（下次预热会重新探测）
+            try:
+                import playwright
+                t.log(f"内核目录已刷新：{playwright.__file__}")
+            except Exception:
+                pass
         except Exception as e:
             t.log(f"[错误] {e}")
         finally:
@@ -1107,7 +1112,13 @@ def api_install_playwright():
             t.log("[结束]")
 
     threading.Thread(target=_work, daemon=True).start()
-    return {"task_id": tid}
+    return tid
+
+
+@app.post("/api/env/install-playwright")
+def api_install_playwright():
+    """一键安装 Playwright 自带的 chromium"""
+    return {"task_id": _start_playwright_install()}
 
 
 @app.post("/api/env/install-ffmpeg")
@@ -1240,6 +1251,32 @@ def api_pool_status():
 def api_pool_close():
     POOL.close()
     return {"ok": True}
+
+
+@app.post("/api/pool/repair")
+def api_pool_repair():
+    """一键修复：清残留进程 / 清锁 / 体检配置目录与内核；缺内核时自动下载"""
+    rep = POOL.repair()
+    if rep.get("need_install"):
+        rep["task_id"] = _start_playwright_install()
+    return rep
+
+
+@app.get("/api/pool/diagnose")
+def api_pool_diagnose():
+    """预热失败时给用户「一键复制诊断」用"""
+    d = POOL.diagnose()
+    try:
+        d["chrome"] = detect_chrome()
+    except Exception as e:
+        d["chrome"] = {"error": str(e)}
+    try:
+        d["playwright"] = playwright_browsers()
+    except Exception as e:
+        d["playwright"] = {"error": str(e)}
+    d["version"] = V.__version__
+    d["app_dir"] = str(BASE)
+    return d
 
 
 # ---------------------------------------------------------------- 已有产物的再加工

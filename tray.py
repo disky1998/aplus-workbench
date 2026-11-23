@@ -123,7 +123,10 @@ def open_front(*_):
 
 def already_running() -> bool:
     try:
-        with urllib.request.urlopen(URL + "api/version", timeout=1.6) as r:
+        # 必须显式绕过系统代理：HTTP_PROXY 存在时 urllib 会把 127.0.0.1 的探测
+        # 也发给代理，结果永远判成「没在运行」，随后抢端口失败、程序起不来。
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(URL + "api/version", timeout=1.6) as r:
             return r.status == 200
     except Exception:
         return False
